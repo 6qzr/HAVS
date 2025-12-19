@@ -1,38 +1,27 @@
 #!/usr/bin/env python3
-"""
-FastAPI wrapper exposing the vulnerability scanner as a web service.
-Render-ready version with CORS and ML integration.
-"""
-
 from fastapi import FastAPI, HTTPException, UploadFile, File, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, validator
-from typing import Optional, List
+from typing import Optional
 from urllib.parse import urlparse
-import tempfile
-import shutil
+import tempfile, shutil, zipfile
 from pathlib import Path
-import asyncio
-import json
-import zipfile
+import asyncio, json
 
 from backend.core.scanner import scan_dependencies, find_dependency_files, extract_source_files
-from backend.core import ml_service
 from backend.services.email_service import send_feedback_email
 from backend.integrations.github_webhook import GitHubWebhookHandler
-import os
+from backend.core.ml_service import predict as ml_predict
 
-# ------------------- APP -------------------
 app = FastAPI(
     title="Vulnerability Scanner API",
     description="Main API orchestrator for vulnerability scanning services.",
     version="1.0.0",
 )
 
-# Allow frontend domain (update with your domain)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://havs-vvia.onrender.com"],  # frontend domain
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -54,9 +43,9 @@ class ScanRequest(BaseModel):
         return value
 
 # ------------------- HELPERS -------------------
-def call_dependency_scanner(dependency_files: list) -> dict:
+def call_dependency_scanner(files: Optional[list] = None, repo_path: Optional[str] = None) -> dict:
     try:
-        return scan_dependencies(files=dependency_files)
+        return scan_dependencies(repo_path=repo_path, files=files)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Dependency scan failed: {str(e)}")
 
@@ -85,33 +74,28 @@ def health_check():
 # ------------------- SCAN -------------------
 @app.post("/scan")
 def scan_endpoint(payload: ScanRequest):
-    result = scan_dependencies(repo_path=payload.repo_url)
+    result = call_dependency_scanner(repo_path=payload.repo_url)
     if not result.get("success"):
         raise HTTPException(status_code=400, detail=result.get("error", "Unknown scan error"))
     return result
 
 @app.post("/scan-upload")
-async def scan_upload_endpoint(files: List[UploadFile] = File(...)):
+async def scan_upload_endpoint(files: list[UploadFile] = File(...)):
     if not files:
         raise HTTPException(status_code=400, detail="No files provided")
 
     temp_dir = tempfile.mkdtemp(prefix="vuln_scan_upload_")
     try:
         uploaded_filenames = []
-        total_size = 0
-        MAX_SIZE = 100 * 1024 * 1024  # 100MB
 
-        for uploaded_file in files:
-            content = await uploaded_file.read()
-            if len(content) > MAX_SIZE:
-                raise HTTPException(status_code=400, detail=f"{uploaded_file.filename} exceeds 100MB")
-            total_size += len(content)
-            if total_size > MAX_SIZE:
-                raise HTTPException(status_code=400, detail=f"Total upload exceeds 100MB")
-            path = Path(temp_dir) / uploaded_file.filename
+        # Save uploaded files
+        for f in files:
+            content = await f.read()
+            path = Path(temp_dir) / f.filename
             path.write_bytes(content)
-            uploaded_filenames.append(uploaded_file.filename)
+            uploaded_filenames.append(f.filename)
 
+        # Extract ZIP if uploaded
         first_file = files[0]
         if first_file.filename.lower().endswith(".zip"):
             zip_path = Path(temp_dir) / first_file.filename
@@ -119,6 +103,7 @@ async def scan_upload_endpoint(files: List[UploadFile] = File(...)):
                 zip_ref.extractall(temp_dir)
             zip_path.unlink()
 
+        # Gather dependency and source files
         manifest_files = find_dependency_files(temp_dir)
         source_files = extract_source_files(temp_dir, include_content=True)
 
@@ -130,9 +115,9 @@ async def scan_upload_endpoint(files: List[UploadFile] = File(...)):
             except Exception:
                 continue
 
-        dep_result = call_dependency_scanner(dep_files_for_service) if dep_files_for_service else {"success": True, "dependencies": [], "summary": {}}
+        dep_result = call_dependency_scanner(files=dep_files_for_service) if dep_files_for_service else {"success": True, "dependencies": [], "summary": {}}
 
-        result = {
+        return {
             "success": True,
             "repo_path": f"Uploaded: {', '.join(uploaded_filenames)}",
             "dependencies": dep_result.get("dependencies", []),
@@ -145,8 +130,6 @@ async def scan_upload_endpoint(files: List[UploadFile] = File(...)):
             },
             "summary": dep_result.get("summary", {}),
         }
-
-        return result
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
 
@@ -159,8 +142,7 @@ async def ml_predict_endpoint(payload: dict):
     if len(files) > 30:
         raise HTTPException(status_code=400, detail="Maximum 30 files per request")
     try:
-        analyzer = ml_service.get_analyzer()  # singleton
-        return [analyzer.predict_single(f.get("content", "")) for f in files]
+        return ml_predict(files)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"ML prediction failed: {str(e)}")
 
@@ -190,17 +172,14 @@ async def websocket_scan_endpoint(websocket: WebSocket):
             return
 
         loop = asyncio.get_event_loop()
-
         def run_scan():
             return scan_dependencies(repo_path=repo_url)
-
         result = await loop.run_in_executor(None, run_scan)
 
         if result.get("success"):
             await websocket.send_json({"type": "complete", "data": result})
         else:
             await websocket.send_json({"type": "error", "message": result.get("error", "Scan failed")})
-
     except WebSocketDisconnect:
         print("Client disconnected")
     except Exception as e:
