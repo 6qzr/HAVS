@@ -745,7 +745,12 @@ def scan_dependencies(
                 "total_deps_scanned": len(all_deps),
                 "deps_with_vulnerabilities": len(vulnerable_deps),
                 "total_vulnerabilities": total_cves,
-                "vulnerabilities_by_severity": severity_counts
+                "vulnerabilities_by_severity": {
+                "critical": severity_counts.get("critical", 0),
+                "high": severity_counts.get("high", 0),
+                "medium": severity_counts.get("medium", 0),
+                "low": severity_counts.get("low", 0),
+                }
             }
         }
 

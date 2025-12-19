@@ -147,25 +147,31 @@ class VulnerabilityAnalyzer:
     def predict_batch(self, files: List[Dict]) -> List[Dict]:
         """
         Predict vulnerabilities for multiple files
-        
+
         Args:
             files: List of file dictionaries with 'path', 'content', etc.
-            
+
         Returns:
             List of prediction results for each file
         """
         results = []
         total_files = len(files)
-        
+
         print(f"[ML Service] Analyzing {total_files} file(s)...")
-        
+
         for i, file in enumerate(files, 1):
             try:
                 file_path = file.get("path", "unknown")
                 content = file.get("content", "")
-                
-                # Skip if no content
-                if not content or not content.strip():
+
+                # Normalize content: join list of lines if needed
+                if isinstance(content, list):
+                    content = "\n".join(str(line) for line in content)
+                elif not isinstance(content, str):
+                    content = str(content)
+
+                # Skip if empty
+                if not content.strip():
                     results.append({
                         "file_path": file_path,
                         "filename": file.get("filename", Path(file_path).name),
@@ -174,13 +180,13 @@ class VulnerabilityAnalyzer:
                         "error": "No content available"
                     })
                     continue
-                
+
                 # Run prediction (with attention for visualization)
                 prediction = self.predict_single(content, include_attention=True)
-                
+
                 # Calculate risk level
                 risk_level = self._get_risk_level(prediction)
-                
+
                 result_dict = {
                     "file_path": file_path,
                     "filename": file.get("filename", Path(file_path).name),
@@ -192,16 +198,16 @@ class VulnerabilityAnalyzer:
                     "risk_level": risk_level,
                     "success": True
                 }
-                
+
                 # Add attention data if available
                 if "tokens" in prediction and "attention_weights" in prediction:
                     result_dict["tokens"] = prediction["tokens"]
                     result_dict["attention_weights"] = prediction["attention_weights"]
-                
+
                 results.append(result_dict)
-                
+
                 print(f"[ML Service] [{i}/{total_files}] {file_path}: {prediction['prediction']} ({prediction['confidence']:.2%})")
-                
+
             except Exception as e:
                 print(f"[ML Service] Error analyzing {file.get('path', 'unknown')}: {e}")
                 results.append({
@@ -211,8 +217,8 @@ class VulnerabilityAnalyzer:
                     "success": False,
                     "error": str(e)
                 })
-        
         return results
+
     
     def _get_risk_level(self, prediction: Dict) -> str:
         """

@@ -136,15 +136,33 @@ async def scan_upload_endpoint(files: list[UploadFile] = File(...)):
 # ------------------- ML -------------------
 @app.post("/ml/predict")
 async def ml_predict_endpoint(payload: dict):
-    files = payload.get("files", [])
+    files = payload.get("files")
+    
+    # Accept single file (dict) or list of files
     if not files:
         raise HTTPException(status_code=400, detail="No files provided")
+    if isinstance(files, dict):
+        files = [files]
+    elif not isinstance(files, list):
+        raise HTTPException(status_code=400, detail="Invalid files format")
+
     if len(files) > 30:
         raise HTTPException(status_code=400, detail="Maximum 30 files per request")
+
+    # Ensure content is string and strip properly
+    for f in files:
+        content = f.get("content")
+        if isinstance(content, list):
+            # Join list of lines into a single string
+            f["content"] = "\n".join(str(line) for line in content)
+        elif content is None:
+            f["content"] = ""
+
     try:
         return ml_predict(files)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"ML prediction failed: {str(e)}")
+
 
 @app.post("/ml/feedback")
 async def ml_feedback_endpoint(payload: dict):
