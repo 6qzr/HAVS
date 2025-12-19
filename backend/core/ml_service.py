@@ -269,6 +269,10 @@ def get_analyzer(model_path: Optional[str] = None) -> VulnerabilityAnalyzer:
     
     return _analyzer_instance
 
+def predict(code: str):
+    analyzer = get_analyzer()
+    return analyzer.predict_single(code)
+
 
 # ============= QUICK TEST FUNCTION =============
 def test_analyzer():
