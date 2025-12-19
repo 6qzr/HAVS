@@ -166,12 +166,15 @@ class VulnerabilityAnalyzer:
             language = f.get("language", "Unknown")
             content = f.get("content", "")
             
-            if not isinstance(content, str):
-                # Convert to string if accidentally a list or other type
-                content = str(content)
+            # Ensure content is a string (handle case where it might be a list)
+            if isinstance(content, list):
+                content = "\n".join(str(line) for line in content)
+            elif not isinstance(content, str):
+                # Convert to string if accidentally other type
+                content = str(content) if content is not None else ""
             
             # Skip empty content
-            if not content.strip():
+            if not content or not content.strip():
                 results.append({
                     "file_path": file_path,
                     "filename": filename,
@@ -270,10 +273,6 @@ def get_analyzer(model_path: Optional[str] = None) -> VulnerabilityAnalyzer:
         _model_path = model_path
     
     return _analyzer_instance
-
-def predict(code: str):
-    analyzer = get_analyzer()
-    return analyzer.predict_single(code)
 
 
 # ============= QUICK TEST FUNCTION =============

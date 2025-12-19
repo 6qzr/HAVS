@@ -8,7 +8,7 @@ Runs on port 8002
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Union
 import time
 
 # Import ML service
@@ -36,7 +36,7 @@ class SourceFile(BaseModel):
     lines_of_code: Optional[int] = 0
 
 class PredictRequest(BaseModel):
-    files: List[SourceFile]
+    files: Union[SourceFile, List[SourceFile]]
 
 @app.get("/health")
 async def health_check():
@@ -63,23 +63,38 @@ async def predict_endpoint(request: PredictRequest):
     Predict vulnerabilities in source code files
     
     Args:
-        request: List of source code files with content
+        request: Single file (SourceFile) or list of source code files with content
         
     Returns:
         ML prediction results with confidence scores
     """
-    if not request.files:
+    # Accept single file or list of files
+    files = request.files
+    if not files:
         raise HTTPException(status_code=400, detail="No files provided")
     
-    if len(request.files) > 30:
+    # Convert single file to list for uniform processing
+    if isinstance(files, SourceFile):
+        files = [files]
+    
+    if len(files) > 30:
         raise HTTPException(
             status_code=400,
             detail="Maximum 30 files per request"
         )
     
     # Validate files have content
-    for file in request.files:
-        if not file.content or not file.content.strip():
+    for file in files:
+        # Ensure content is a string (handle case where it might be a list)
+        content = file.content
+        if isinstance(content, list):
+            content = "\n".join(str(line) for line in content)
+            file.content = content
+        elif not isinstance(content, str):
+            content = str(content) if content is not None else ""
+            file.content = content
+        
+        if not content or not content.strip():
             raise HTTPException(
                 status_code=400,
                 detail=f"File {file.path} has no content"
@@ -101,7 +116,7 @@ async def predict_endpoint(request: PredictRequest):
     
     # Prepare files for batch prediction
     files_to_analyze = []
-    for file in request.files:
+    for file in files:
         files_to_analyze.append({
             "path": file.path,
             "filename": file.filename,
@@ -137,7 +152,7 @@ async def predict_endpoint(request: PredictRequest):
         "success": True,
         "predictions": predictions,
         "summary": {
-            "total_files": len(request.files),
+            "total_files": len(files),
             "vulnerable_files": vulnerable_count,
             "safe_files": safe_count,
             "failed_files": failed_count,

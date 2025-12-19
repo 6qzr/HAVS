@@ -11,7 +11,7 @@ import asyncio, json
 from backend.core.scanner import scan_dependencies, find_dependency_files, extract_source_files
 from backend.services.email_service import send_feedback_email
 from backend.integrations.github_webhook import GitHubWebhookHandler
-from backend.core.ml_service import predict as ml_predict
+from backend.core.ml_service import get_analyzer
 
 app = FastAPI(
     title="Vulnerability Scanner API",
@@ -159,7 +159,30 @@ async def ml_predict_endpoint(payload: dict):
             f["content"] = ""
 
     try:
-        return ml_predict(files)
+        analyzer = get_analyzer()
+        predictions = analyzer.predict_batch(files)
+        
+        # Calculate summary
+        vulnerable_count = sum(
+            1 for p in predictions
+            if p.get("success") and p.get("prediction") == "VULNERABLE"
+        )
+        safe_count = sum(
+            1 for p in predictions
+            if p.get("success") and p.get("prediction") == "SAFE"
+        )
+        failed_count = sum(1 for p in predictions if not p.get("success"))
+        
+        return {
+            "success": True,
+            "predictions": predictions,
+            "summary": {
+                "total_files": len(files),
+                "vulnerable_files": vulnerable_count,
+                "safe_files": safe_count,
+                "failed_files": failed_count
+            }
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"ML prediction failed: {str(e)}")
 
