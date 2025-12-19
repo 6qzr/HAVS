@@ -1,13 +1,13 @@
 services:
-  # Backend Service
+  # Backend Service (FastAPI)
   - type: web
-    name: HAVS-Backend
+    name: havs-backend
     env: python
     region: oregon
     plan: free
     branch: main
     buildCommand: pip install -r requirements.txt
-    startCommand: python3 backend/main.py
+    startCommand: uvicorn backend.main:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: NVD_API_KEY
         sync: false
@@ -15,9 +15,9 @@ services:
         value: 3.11.0
     healthCheckPath: /health
 
-  # Frontend Service
+  # Frontend Service (Static React)
   - type: web
-    name: HAVS
+    name: havs-frontend
     env: static
     region: oregon
     plan: free
@@ -26,4 +26,4 @@ services:
     staticPublishPath: fyp_dashboard/dist
     envVars:
       - key: VITE_API_URL
-        value: https://HAVS-Backend.onrender.com
+        value: https://havs-backend.onrender.com
