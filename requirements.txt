@@ -1,0 +1,25 @@
+# ============================================================
+# CORE DEPENDENCIES
+# ============================================================
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+requests==2.32.5
+packaging==25.0
+pydantic==2.5.0
+websockets==12.0
+
+# ============================================================
+# ML DEPENDENCIES - Vulnerability Detection
+# ============================================================
+# PyTorch - Deep learning framework
+torch>=2.0.0
+
+# Transformers - Hugging Face library for RoBERTa/CodeBERT
+transformers>=4.47.0
+
+# SafeTensors - Fast and safe tensor serialization
+safetensors>=0.4.0
+
+# Optional but recommended for better performance
+# accelerate>=0.20.0  # For faster model loading
+# sentencepiece>=0.1.99  # For certain tokenizers
