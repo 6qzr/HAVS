@@ -144,53 +144,51 @@ class VulnerabilityAnalyzer:
         
         return result
     
-    def predict_batch(self, files: List[Dict]) -> List[Dict]:
+    def predict_batch(self, files: list) -> list:
         """
-        Predict vulnerabilities for multiple files
-
+        Predict vulnerabilities for multiple files (or single file)
+        
         Args:
-            files: List of file dictionaries with 'path', 'content', etc.
-
+            files: list of file dicts with 'content' and optional metadata
+        
         Returns:
-            List of prediction results for each file
+            List of results per file
         """
+        # Ensure we can handle a single file dict
+        if isinstance(files, dict):
+            files = [files]
+        
         results = []
-        total_files = len(files)
-
-        print(f"[ML Service] Analyzing {total_files} file(s)...")
-
-        for i, file in enumerate(files, 1):
+        
+        for f in files:
+            file_path = f.get("path", "unknown")
+            filename = f.get("filename", Path(file_path).name)
+            language = f.get("language", "Unknown")
+            content = f.get("content", "")
+            
+            if not isinstance(content, str):
+                # Convert to string if accidentally a list or other type
+                content = str(content)
+            
+            # Skip empty content
+            if not content.strip():
+                results.append({
+                    "file_path": file_path,
+                    "filename": filename,
+                    "language": language,
+                    "success": False,
+                    "error": "No content available"
+                })
+                continue
+            
             try:
-                file_path = file.get("path", "unknown")
-                content = file.get("content", "")
-
-                # Normalize content: join list of lines if needed
-                if isinstance(content, list):
-                    content = "\n".join(str(line) for line in content)
-                elif not isinstance(content, str):
-                    content = str(content)
-
-                # Skip if empty
-                if not content.strip():
-                    results.append({
-                        "file_path": file_path,
-                        "filename": file.get("filename", Path(file_path).name),
-                        "language": file.get("language", "Unknown"),
-                        "success": False,
-                        "error": "No content available"
-                    })
-                    continue
-
-                # Run prediction (with attention for visualization)
                 prediction = self.predict_single(content, include_attention=True)
-
-                # Calculate risk level
                 risk_level = self._get_risk_level(prediction)
-
+                
                 result_dict = {
                     "file_path": file_path,
-                    "filename": file.get("filename", Path(file_path).name),
-                    "language": file.get("language", "Unknown"),
+                    "filename": filename,
+                    "language": language,
                     "prediction": prediction["prediction"],
                     "confidence": prediction["confidence"],
                     "vuln_score": prediction["vuln_score"],
@@ -198,26 +196,24 @@ class VulnerabilityAnalyzer:
                     "risk_level": risk_level,
                     "success": True
                 }
-
-                # Add attention data if available
+                
+                # Include attention data if available
                 if "tokens" in prediction and "attention_weights" in prediction:
                     result_dict["tokens"] = prediction["tokens"]
                     result_dict["attention_weights"] = prediction["attention_weights"]
-
+                
                 results.append(result_dict)
-
-                print(f"[ML Service] [{i}/{total_files}] {file_path}: {prediction['prediction']} ({prediction['confidence']:.2%})")
-
+            
             except Exception as e:
-                print(f"[ML Service] Error analyzing {file.get('path', 'unknown')}: {e}")
                 results.append({
-                    "file_path": file.get("path", "unknown"),
-                    "filename": file.get("filename", "unknown"),
-                    "language": file.get("language", "Unknown"),
+                    "file_path": file_path,
+                    "filename": filename,
+                    "language": language,
                     "success": False,
                     "error": str(e)
                 })
         return results
+
 
     
     def _get_risk_level(self, prediction: Dict) -> str:
