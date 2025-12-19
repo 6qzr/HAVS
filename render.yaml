@@ -17,7 +17,7 @@ services:
 
   # Frontend Service
   - type: web
-    name: HAVS-Frontend
+    name: HAVS
     env: static
     region: oregon
     plan: free
