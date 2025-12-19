@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
 FastAPI wrapper exposing the vulnerability scanner as a web service.
-Render-safe version: all services run in-process.
+Render-ready version with CORS and ML integration.
 """
 
 from fastapi import FastAPI, HTTPException, UploadFile, File, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, validator
-from typing import Optional
+from typing import Optional, List
 from urllib.parse import urlparse
 import tempfile
 import shutil
@@ -17,20 +17,22 @@ import json
 import zipfile
 
 from backend.core.scanner import scan_dependencies, find_dependency_files, extract_source_files
-from backend.core.ml_service import predict as ml_predict
+from backend.core import ml_service
 from backend.services.email_service import send_feedback_email
 from backend.integrations.github_webhook import GitHubWebhookHandler
 import os
 
+# ------------------- APP -------------------
 app = FastAPI(
     title="Vulnerability Scanner API",
     description="Main API orchestrator for vulnerability scanning services.",
     version="1.0.0",
 )
 
+# Allow frontend domain (update with your domain)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["https://havs-vvia.onrender.com"],  # frontend domain
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -51,17 +53,14 @@ class ScanRequest(BaseModel):
             raise ValueError("repo_url must contain a valid host.")
         return value
 
-# ------------------- HELPER -------------------
+# ------------------- HELPERS -------------------
 def call_dependency_scanner(dependency_files: list) -> dict:
-    """
-    Directly call the dependency scanner in-process
-    """
     try:
         return scan_dependencies(files=dependency_files)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Dependency scan failed: {str(e)}")
 
-# ------------------- BASIC ENDPOINTS -------------------
+# ------------------- ENDPOINTS -------------------
 @app.get("/")
 def root():
     return {
@@ -83,19 +82,16 @@ def root():
 def health_check():
     return {"status": "healthy", "service": "vulnerability-scanner"}
 
-# ------------------- SCAN ENDPOINTS -------------------
+# ------------------- SCAN -------------------
 @app.post("/scan")
 def scan_endpoint(payload: ScanRequest):
-    """
-    Scan a repository for dependency vulnerabilities
-    """
     result = scan_dependencies(repo_path=payload.repo_url)
     if not result.get("success"):
         raise HTTPException(status_code=400, detail=result.get("error", "Unknown scan error"))
     return result
 
 @app.post("/scan-upload")
-async def scan_upload_endpoint(files: list[UploadFile] = File(...)):
+async def scan_upload_endpoint(files: List[UploadFile] = File(...)):
     if not files:
         raise HTTPException(status_code=400, detail="No files provided")
 
@@ -105,7 +101,6 @@ async def scan_upload_endpoint(files: list[UploadFile] = File(...)):
         total_size = 0
         MAX_SIZE = 100 * 1024 * 1024  # 100MB
 
-        # Save files to temp dir
         for uploaded_file in files:
             content = await uploaded_file.read()
             if len(content) > MAX_SIZE:
@@ -117,7 +112,6 @@ async def scan_upload_endpoint(files: list[UploadFile] = File(...)):
             path.write_bytes(content)
             uploaded_filenames.append(uploaded_file.filename)
 
-        # Handle ZIP vs multiple files
         first_file = files[0]
         if first_file.filename.lower().endswith(".zip"):
             zip_path = Path(temp_dir) / first_file.filename
@@ -128,7 +122,6 @@ async def scan_upload_endpoint(files: list[UploadFile] = File(...)):
         manifest_files = find_dependency_files(temp_dir)
         source_files = extract_source_files(temp_dir, include_content=True)
 
-        # Call dependency scanner
         dep_files_for_service = []
         for file_path, _ in manifest_files:
             try:
@@ -139,7 +132,6 @@ async def scan_upload_endpoint(files: list[UploadFile] = File(...)):
 
         dep_result = call_dependency_scanner(dep_files_for_service) if dep_files_for_service else {"success": True, "dependencies": [], "summary": {}}
 
-        # Build final result
         result = {
             "success": True,
             "repo_path": f"Uploaded: {', '.join(uploaded_filenames)}",
@@ -158,7 +150,7 @@ async def scan_upload_endpoint(files: list[UploadFile] = File(...)):
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
 
-# ------------------- ML ENDPOINT -------------------
+# ------------------- ML -------------------
 @app.post("/ml/predict")
 async def ml_predict_endpoint(payload: dict):
     files = payload.get("files", [])
@@ -167,7 +159,8 @@ async def ml_predict_endpoint(payload: dict):
     if len(files) > 30:
         raise HTTPException(status_code=400, detail="Maximum 30 files per request")
     try:
-        return ml_predict(files)
+        analyzer = ml_service.get_analyzer()  # singleton
+        return [analyzer.predict_single(f.get("content", "")) for f in files]
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"ML prediction failed: {str(e)}")
 
