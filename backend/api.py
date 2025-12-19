@@ -17,7 +17,7 @@ import json
 import zipfile
 
 from backend.core.scanner import scan_dependencies, find_dependency_files, extract_source_files
-from backend.services.ml_service import predict as ml_predict
+from backend.core.ml_service import predict as ml_predict
 from backend.services.email_service import send_feedback_email
 from backend.integrations.github_webhook import GitHubWebhookHandler
 import os
