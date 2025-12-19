@@ -137,18 +137,19 @@ class APIService {
   transformScanResults(backendData) {
     if (!backendData.success) throw new Error(backendData.error || 'Scan failed');
 
-    const dependencies = backendData.dependencies.map(dep => ({
+    const dependencies = backendData.dependencies?.map(dep => ({
       name: dep.name,
       version: dep.version,
       ecosystem: dep.ecosystem,
       vulnerabilityCount: dep.cves?.length || 0,
       hasVulnerabilities: dep.cves?.length > 0,
       cves: dep.cves?.map(cve => ({ ...cve, cisaKev: cve.cisa_kev === 'Yes' })) || []
-    }));
+    })) || [];
 
     const vulnerabilities = [];
     let cisaKevCount = 0;
-    backendData.dependencies.forEach(dep => {
+
+    dependencies.forEach(dep => {
       dep.cves?.forEach(cve => {
         const isCisaKev = cve.cisa_kev === 'Yes';
         if (isCisaKev) cisaKevCount++;
@@ -169,19 +170,26 @@ class APIService {
       });
     });
 
+    const severity = backendData.summary?.vulnerabilities_by_severity || {
+      critical: 0,
+      high: 0,
+      medium: 0,
+      low: 0
+    };
+
     return {
       scanId: `scan_${Date.now()}`,
       timestamp: backendData.scanned_at,
       duration: backendData.scan_duration_seconds,
       repoPath: backendData.repo_path,
       summary: {
-        totalDependencies: backendData.summary.total_deps_scanned,
-        totalVulnerabilities: backendData.summary.total_vulnerabilities,
-        vulnerableDependencies: backendData.summary.deps_with_vulnerabilities,
-        criticalCount: backendData.summary.vulnerabilities_by_severity.critical,
-        highCount: backendData.summary.vulnerabilities_by_severity.high,
-        mediumCount: backendData.summary.vulnerabilities_by_severity.medium,
-        lowCount: backendData.summary.vulnerabilities_by_severity.low,
+        totalDependencies: backendData.summary?.total_deps_scanned || 0,
+        totalVulnerabilities: backendData.summary?.total_vulnerabilities || 0,
+        vulnerableDependencies: backendData.summary?.deps_with_vulnerabilities || 0,
+        criticalCount: severity.critical,
+        highCount: severity.high,
+        mediumCount: severity.medium,
+        lowCount: severity.low,
         cisaKevCount
       },
       dependencies,
