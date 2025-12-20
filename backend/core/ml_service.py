@@ -6,7 +6,8 @@ Uses RoBERTa (CodeBERT) model to predict vulnerabilities in source code
 
 import torch
 import torch.nn.functional as F
-from transformers import AutoTokenizer, AutoModelForSequenceClassification
+from transformers import AutoTokenizer, AutoConfig, AutoModelForSequenceClassification
+from safetensors.torch import load_file
 from pathlib import Path
 from typing import Dict, List, Optional
 import time
@@ -33,23 +34,33 @@ class VulnerabilityAnalyzer:
             raise FileNotFoundError(f"Model not found at: {model_path}")
         
         # Set device (GPU if available, otherwise CPU)
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = torch.device("cpu")
         print(f"[ML Service] Using device: {self.device}")
         
         # Load tokenizer (CodeBERT base)
         print("[ML Service] Loading tokenizer...")
         self.tokenizer = AutoTokenizer.from_pretrained("microsoft/codebert-base")
         
-        # Load trained model
-        print("[ML Service] Loading trained model...")
-        self.model = AutoModelForSequenceClassification.from_pretrained(
+        print("[ML Service] Loading trained model (manual safetensors)...")
+
+        # Load config
+        config = AutoConfig.from_pretrained(
             str(model_path),
             num_labels=2,
-            output_attentions=True,  # Enable attention for code highlighting
+            output_attentions=True,
             output_hidden_states=False
         )
-        self.model.to(self.device)
-        self.model.eval()  # Set to evaluation mode
+
+        # Create model from config
+        self.model = AutoModelForSequenceClassification.from_config(config)
+
+        # Load weights from safetensors
+        state_dict = load_file(str(model_path / "model.safetensors"))
+        self.model.load_state_dict(state_dict)
+
+        # Force CPU (important for Render)
+        self.model.to("cpu")
+        self.model.eval()
         
         load_time = time.time() - start_time
         print(f"[ML Service] Model loaded successfully in {load_time:.2f}s")
