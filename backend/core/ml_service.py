@@ -65,7 +65,7 @@ class VulnerabilityAnalyzer:
         load_time = time.time() - start_time
         print(f"[ML Service] Model loaded successfully in {load_time:.2f}s")
     
-    def predict_single(self, code: str, include_attention: bool = False) -> Dict:
+    def predict_single(self, code: str, include_attention: bool = True) -> Dict:
         """
         Predict vulnerability for a single code snippet
         
@@ -196,7 +196,7 @@ class VulnerabilityAnalyzer:
                 continue
             
             try:
-                prediction = self.predict_single(content, include_attention=False)
+                prediction = self.predict_single(content, include_attention=True)
                 risk_level = self._get_risk_level(prediction)
                 
                 result_dict = {
