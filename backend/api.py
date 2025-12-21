@@ -17,9 +17,10 @@ import zipfile
 import requests
 import os
 
-from backend.core.scanner import scan_dependencies, find_dependency_files, extract_source_files
+from backend.core.scanner import scan_dependencies, find_dependency_files, extract_source_files, parse_package_json, parse_requirements_txt, parse_pom_xml, find_vulnerabilities
 from backend.integrations.github_webhook import GitHubWebhookHandler
 from backend.services.email_service import send_feedback_email
+from backend.core.ml_service import get_analyzer
 
 app = FastAPI(
     title="Vulnerability Scanner API",
@@ -812,27 +813,90 @@ async def github_scan_dependencies_endpoint(payload: dict = Body(...)):
         if not repository or not commit_sha:
             return {"success": False, "error": "repository and commit_sha are required"}
         
-        # Call Dependency Scanner Service
+        # Scan dependencies directly (no separate service needed)
         try:
-            # Prepare files for dependency scanner
-            dep_payload = {"files": []}
-            for file_data in files:
-                dep_payload["files"].append({
-                    "filename": file_data.get("path", file_data.get("filename", "unknown")),
-                    "content": file_data.get("content", "")
-                })
+            import tempfile
+            temp_dir = tempfile.mkdtemp(prefix='github_dep_scan_')
+            all_deps = []
             
-            response = requests.post(
-                f"{DEPENDENCY_SCANNER_URL}/scan-dependencies",
-                json=dep_payload,
-                timeout=600
-            )
-            response.raise_for_status()
-            dep_result = response.json()
-        except requests.exceptions.ConnectionError:
-            return {"success": False, "error": "Dependency Scanner Service is not available. Please start it on port 8001."}
-        except requests.exceptions.HTTPError as e:
-            return {"success": False, "error": f"Dependency Scanner Service error: {e.response.text if hasattr(e, 'response') else str(e)}"}
+            # Process each dependency file
+            for file_data in files:
+                file_path_str = file_data.get("path", file_data.get("filename", "unknown"))
+                file_content = file_data.get("content", "")
+                
+                # Create temporary file
+                file_path = Path(temp_dir) / Path(file_path_str).name
+                file_path.write_text(file_content, encoding='utf-8')
+                
+                # Parse based on file type
+                filename_lower = file_path_str.lower()
+                
+                try:
+                    if filename_lower.endswith('package.json'):
+                        deps = parse_package_json(file_path)
+                        all_deps.extend(deps)
+                    elif filename_lower.endswith('requirements.txt'):
+                        deps = parse_requirements_txt(file_path)
+                        all_deps.extend(deps)
+                    elif filename_lower.endswith('pom.xml'):
+                        deps = parse_pom_xml(file_path)
+                        all_deps.extend(deps)
+                except Exception as e:
+                    # Skip files that can't be parsed
+                    continue
+            
+            if not all_deps:
+                dep_result = {
+                    "success": True,
+                    "dependencies": [],
+                    "vulnerabilities": [],
+                    "summary": {
+                        "total_deps_scanned": 0,
+                        "deps_with_vulnerabilities": 0,
+                        "total_vulnerabilities": 0,
+                        "vulnerabilities_by_severity": {
+                            "critical": 0,
+                            "high": 0,
+                            "medium": 0,
+                            "low": 0
+                        }
+                    }
+                }
+            else:
+                # Scan each dependency for vulnerabilities
+                for dep in all_deps:
+                    dep["cves"] = find_vulnerabilities(dep)
+                
+                # Filter dependencies - only include those with vulnerabilities
+                vulnerable_deps = [dep for dep in all_deps if dep.get("cves")]
+                
+                # Calculate statistics
+                severity_counts = {"critical": 0, "high": 0, "medium": 0, "low": 0}
+                total_cves = 0
+                
+                for dep in vulnerable_deps:
+                    for cve in dep.get("cves", []):
+                        severity = cve.get("severity", "unknown")
+                        if severity != "unknown":
+                            severity_counts[severity] += 1
+                        total_cves += 1
+                
+                # Build result
+                dep_result = {
+                    "success": True,
+                    "dependencies": vulnerable_deps,
+                    "vulnerabilities": [cve for dep in vulnerable_deps for cve in dep.get("cves", [])],
+                    "summary": {
+                        "total_deps_scanned": len(all_deps),
+                        "deps_with_vulnerabilities": len(vulnerable_deps),
+                        "total_vulnerabilities": total_cves,
+                        "vulnerabilities_by_severity": severity_counts
+                    }
+                }
+            
+            # Cleanup temp directory
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            
         except Exception as e:
             return {"success": False, "error": f"Dependency scan failed: {str(e)}"}
         
@@ -914,8 +978,9 @@ async def github_scan_ml_endpoint(payload: dict = Body(...)):
                     "error": f"File {file.get('path', f'#{i}')} has no content"
                 }
         
-        # Call ML Analysis Service
+        # Call ML Analysis directly (no separate service needed)
         try:
+            import time
             files_for_ml = []
             for file in files:
                 files_for_ml.append({
@@ -926,32 +991,49 @@ async def github_scan_ml_endpoint(payload: dict = Body(...)):
                     "lines_of_code": file.get("lines_of_code", 0)
                 })
             
-            response = requests.post(
-                f"{ML_ANALYSIS_URL}/predict",
-                json={"files": files_for_ml},
-                timeout=300
-            )
-            response.raise_for_status()
-            ml_result = response.json()
-        except requests.exceptions.ConnectionError:
-            return {
-                "success": False,
-                "error": "ML Analysis Service is not available. Please start it on port 8002."
-            }
-        except requests.exceptions.HTTPError as e:
-            error_detail = "Unknown error"
+            # Get analyzer (singleton, cached after first load)
             try:
-                error_detail = e.response.json().get("detail", str(e))
-            except:
-                error_detail = e.response.text if hasattr(e, 'response') else str(e)
-            return {
-                "success": False,
-                "error": f"ML Analysis Service error: {error_detail}"
+                analyzer = get_analyzer()
+            except FileNotFoundError as e:
+                return {
+                    "success": False,
+                    "error": f"ML model not found: {str(e)}"
+                }
+            except Exception as e:
+                return {
+                    "success": False,
+                    "error": f"ML service error: {str(e)}"
+                }
+            
+            # Run batch prediction
+            start_time = time.time()
+            try:
+                predictions = analyzer.predict_batch(files_for_ml)
+            except Exception as e:
+                return {
+                    "success": False,
+                    "error": f"ML prediction failed: {str(e)}"
+                }
+            
+            prediction_time = time.time() - start_time
+            
+            # Format results similar to ML service response
+            ml_result = {
+                "success": True,
+                "predictions": predictions,
+                "summary": {
+                    "total_files": len(files_for_ml),
+                    "files_with_issues": len([p for p in predictions if p.get("has_vulnerability", False)]),
+                    "prediction_time_seconds": round(prediction_time, 2)
+                },
+                "issues": [p for p in predictions if p.get("has_vulnerability", False)],
+                "vulnerabilities": [p for p in predictions if p.get("has_vulnerability", False)]
             }
+            
         except Exception as e:
             return {
                 "success": False,
-                "error": f"Error calling ML Analysis Service: {str(e)}"
+                "error": f"ML scan failed: {str(e)}"
             }
         
         # Post results to GitHub
