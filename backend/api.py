@@ -3,7 +3,7 @@
 FastAPI wrapper exposing the vulnerability scanner as a web service.
 """
 
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, WebSocket, WebSocketDisconnect, Body
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, validator
 from typing import Optional
@@ -107,6 +107,8 @@ def root():
             "/health": "Health check",
             "/scan": "POST - Scan repository for vulnerabilities (URL)",
             "/scan-upload": "POST - Scan uploaded dependency files",
+            "/github/scan-dependencies": "POST - GitHub Actions endpoint for dependency scanning",
+            "/github/scan-ml": "POST - GitHub Actions endpoint for ML source code scanning",
             "/ml/predict": "POST - ML-powered vulnerability prediction for source code",
             "/ml/feedback": "POST - Submit feedback for ML predictions",
             "/ws/scan": "WebSocket - Real-time scan progress",
@@ -778,7 +780,7 @@ async def ml_predict_endpoint(payload: dict):
 # ============= GITHUB ACTIONS ENDPOINTS =============
 
 @app.post("/github/scan-dependencies")
-async def github_scan_dependencies_endpoint(payload: dict):
+async def github_scan_dependencies_endpoint(payload: dict = Body(...)):
     """
     GitHub Actions endpoint for dependency scanning
     
@@ -863,7 +865,7 @@ async def github_scan_dependencies_endpoint(payload: dict):
 
 
 @app.post("/github/scan-ml")
-async def github_scan_ml_endpoint(payload: dict):
+async def github_scan_ml_endpoint(payload: dict = Body(...)):
     """
     GitHub Actions endpoint for ML analysis
     
