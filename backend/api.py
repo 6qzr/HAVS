@@ -881,11 +881,10 @@ async def github_scan_dependencies_endpoint(payload: dict = Body(...)):
                             severity_counts[severity] += 1
                         total_cves += 1
                 
-                # Build result
+                # Build result (vulnerabilities are included in dependencies.cves, no need for duplicate root array)
                 dep_result = {
                     "success": True,
                     "dependencies": vulnerable_deps,
-                    "vulnerabilities": [cve for dep in vulnerable_deps for cve in dep.get("cves", [])],
                     "summary": {
                         "total_deps_scanned": len(all_deps),
                         "deps_with_vulnerabilities": len(vulnerable_deps),
