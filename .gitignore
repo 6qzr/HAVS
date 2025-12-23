@@ -1,0 +1,144 @@
+# ============================================================
+# PYTHON
+# ============================================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+*.whl
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv
+virtualenv/
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.pytest_cache/
+
+# ============================================================
+# NODE / JAVASCRIPT
+# ============================================================
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+package-lock.json
+.pnpm-debug.log*
+
+# Build outputs
+dist/
+build/
+.next/
+out/
+
+# ============================================================
+# IDE / EDITORS
+# ============================================================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+*.sublime-project
+*.sublime-workspace
+
+# ============================================================
+# OS FILES
+# ============================================================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Desktop.ini
+
+# ============================================================
+# ENVIRONMENT & SECRETS
+# ============================================================
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+*.key
+*.pem
+secrets.json
+
+# ============================================================
+# LOGS
+# ============================================================
+*.log
+logs/
+*.log.*
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ============================================================
+# TEMPORARY FILES
+# ============================================================
+*.tmp
+*.temp
+*.bak
+*.swp
+*~.nib
+*.orig
+
+# ============================================================
+# JUPYTER NOTEBOOK
+# ============================================================
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# ============================================================
+# ML / AI MODELS
+# ============================================================
+# Uncomment if you don't want to commit model files
+# *.pth
+# *.pt
+# *.h5
+# *.pkl
+# *.joblib
+# *.onnx
+
+# ============================================================
+# PROJECT SPECIFIC
+# ============================================================
+# Temporary scan directories
+temp_*/
+tmp_*/
+
+# Uploaded files (if any)
+uploads/
+
+# Database files (if any)
+*.db
+*.sqlite
+*.sqlite3
+
