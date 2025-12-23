@@ -79,7 +79,6 @@ Select files → Upload → Batch analysis
 ## 📚 Documentation
 
 - **API Documentation:** http://localhost:8000/docs (when running)
-- **Deployment Guide:** [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md)
 - **ML Model:** GraphCodeBERT base model (automatically downloaded from HuggingFace on first use)
 - **Environment Setup:** See `env.example` template
 
@@ -94,13 +93,6 @@ Select files → Upload → Batch analysis
 
 Key environment variables:
 - `NVD_API_KEY` - Required for optimal scanning speed (50 req/30s vs 5 req/30s)
-
-## 📦 Deployment
-
-Ready to deploy? See **[DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md)** for:
-- 🚀 Push to GitHub (with Git LFS)
-- 🌐 Deploy to Render (free hosting)
-- ⚙️ Setup GitHub Actions (automated scanning)
 
 ## 📝 Project Structure
 
@@ -129,8 +121,6 @@ chmod +x start.sh
 cp env.example .env
 nano .env  # Add your NVD_API_KEY
 ```
-
-For deployment issues, see [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md).
 
 ## 🤝 Contributing
 
