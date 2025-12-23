@@ -79,7 +79,7 @@ Select files → Upload → Batch analysis
 ## 📚 Documentation
 
 - **API Documentation:** http://localhost:8000/docs (when running)
-- **ML Model:** 476MB RoBERTa model in `ml_models/`
+- **ML Model:** GraphCodeBERT base model (automatically downloaded from HuggingFace)
 - **Environment Setup:** See `env.example` template
 
 ## 🔒 Security
@@ -103,7 +103,6 @@ Key environment variables:
 │   ├── services/        # Dependency & ML analysis services
 │   └── core/            # Scanner & ML inference logic
 ├── fyp_dashboard/       # React frontend
-├── ml_models/           # Pre-trained vulnerability detection model
 └── requirements.txt     # Python dependencies
 ```
 

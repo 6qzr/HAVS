@@ -1016,17 +1016,28 @@ async def github_scan_ml_endpoint(payload: dict = Body(...)):
             
             prediction_time = time.time() - start_time
             
+            # Calculate summary statistics
+            vulnerable_count = sum(
+                1 for p in predictions
+                if p.get("success") and p.get("prediction") == "VULNERABLE"
+            )
+            safe_count = sum(
+                1 for p in predictions
+                if p.get("success") and p.get("prediction") == "SAFE"
+            )
+            failed_count = sum(1 for p in predictions if not p.get("success"))
+            
             # Format results similar to ML service response
             ml_result = {
                 "success": True,
                 "predictions": predictions,
                 "summary": {
                     "total_files": len(files_for_ml),
-                    "files_with_issues": len([p for p in predictions if p.get("has_vulnerability", False)]),
-                    "prediction_time_seconds": round(prediction_time, 2)
-                },
-                "issues": [p for p in predictions if p.get("has_vulnerability", False)],
-                "vulnerabilities": [p for p in predictions if p.get("has_vulnerability", False)]
+                    "vulnerable_files": vulnerable_count,
+                    "safe_files": safe_count,
+                    "failed_files": failed_count,
+                    "analysis_time_seconds": round(prediction_time, 2)
+                }
             }
             
         except Exception as e:

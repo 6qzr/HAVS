@@ -18,6 +18,9 @@ torch>=2.0.0
 # Transformers - Hugging Face library for RoBERTa/CodeBERT
 transformers>=4.47.0
 
+# NumPy - Numerical operations for ML processing
+numpy>=1.24.0
+
 # SafeTensors - Fast and safe tensor serialization
 safetensors>=0.4.0
 

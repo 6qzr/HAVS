@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
 ML Service for Vulnerability Detection
-Uses RoBERTa (CodeBERT) model to predict vulnerabilities in source code
+Uses UnixCoder tokenizer with GraphCodeBERT base model to predict vulnerabilities in source code
 """
 
 import torch
 import torch.nn.functional as F
-from transformers import AutoTokenizer, AutoConfig, AutoModelForSequenceClassification
-from safetensors.torch import load_file
+import numpy as np
+from transformers import AutoTokenizer, AutoModelForSequenceClassification
 from pathlib import Path
 from typing import Dict, List, Optional
 import time
@@ -15,51 +15,51 @@ import time
 
 class VulnerabilityAnalyzer:
     """
-    ML-powered vulnerability analyzer using RoBERTa model
+    ML-powered vulnerability analyzer using UnixCoder tokenizer
+    Matches the implementation from GraphCodeBERT.ipynb exactly
     """
     
-    def __init__(self, model_path: str):
+    def __init__(self, model_path: Optional[str] = None):
         """
         Initialize the vulnerability analyzer
+        Matches GraphCodeBERT.ipynb exactly - uses base model by default
         
         Args:
-            model_path: Path to the trained model directory
+            model_path: Path to model (optional, uses base GraphCodeBERT model if not provided)
         """
+        # Use base model by default (matches GraphCodeBERT.ipynb)
+        if model_path is None:
+            model_path = "microsoft/graphcodebert-base"
+        
         print(f"[ML Service] Loading model from: {model_path}")
         start_time = time.time()
         
-        # Check if model exists
-        model_path = Path(model_path)
-        if not model_path.exists():
-            raise FileNotFoundError(f"Model not found at: {model_path}")
-        
         # Set device (GPU if available, otherwise CPU)
-        self.device = torch.device("cpu")
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         print(f"[ML Service] Using device: {self.device}")
         
-        # Load tokenizer (CodeBERT base)
+        # Load the base unixcoder tokenizer (matches GraphCodeBERT.ipynb exactly)
         print("[ML Service] Loading tokenizer...")
-        self.tokenizer = AutoTokenizer.from_pretrained("microsoft/codebert-base")
+        self.tokenizer = AutoTokenizer.from_pretrained("microsoft/unixcoder-base")
         
-        print("[ML Service] Loading trained model (manual safetensors)...")
-
-        # Load config
-        config = AutoConfig.from_pretrained(
-            str(model_path),
-            num_labels=2,
+        # Load model (matches GraphCodeBERT.ipynb exactly)
+        # If model_path is a local path, check if it exists
+        if not model_path.startswith("microsoft/") and not model_path.startswith("http"):
+            model_path_obj = Path(model_path)
+            if not model_path_obj.exists():
+                raise FileNotFoundError(
+                    f"Model not found at: {model_path}\n"
+                    f"Please ensure the model directory exists with config.json and model files."
+                )
+            model_path = str(model_path_obj.resolve())
+        
+        print("[ML Service] Loading model...")
+        self.model = AutoModelForSequenceClassification.from_pretrained(
+            model_path,
             output_attentions=True,
-            output_hidden_states=False
+            num_labels=2
         )
-
-        # Create model from config
-        self.model = AutoModelForSequenceClassification.from_config(config)
-
-        # Load weights from safetensors
-        state_dict = load_file(str(model_path / "model.safetensors"))
-        self.model.load_state_dict(state_dict)
-
-        # Force CPU (important for Render)
-        self.model.to("cpu")
+        self.model.to(self.device)
         self.model.eval()
         
         load_time = time.time() - start_time
@@ -68,6 +68,7 @@ class VulnerabilityAnalyzer:
     def predict_single(self, code: str, include_attention: bool = True) -> Dict:
         """
         Predict vulnerability for a single code snippet
+        Matches the implementation from GraphCodeBERT.ipynb exactly
         
         Args:
             code: Source code string
@@ -80,8 +81,8 @@ class VulnerabilityAnalyzer:
                 "confidence": float (0-1),
                 "vuln_score": float (0-1),
                 "safe_score": float (0-1),
-                "tokens": list of tokens (if include_attention),
-                "attention_weights": list of attention scores (if include_attention)
+                "line_scores": list of average attention scores per line (if include_attention),
+                "code_lines": list of code lines (if include_attention)
             }
         """
         if not code or not code.strip():
@@ -93,116 +94,145 @@ class VulnerabilityAnalyzer:
                 "error": "Empty code"
             }
         
-        # 1. Tokenize code
+        # 1. Tokenize Code with Offsets (matches GraphCodeBERT.ipynb exactly)
+        # We need offsets to map tokens back to specific lines of code
         inputs = self.tokenizer(
             code,
             return_tensors="pt",
             truncation=True,
             max_length=512,
-            padding="max_length"
+            padding="max_length",
+            return_offsets_mapping=True  # Critical for mapping tokens to lines
         )
         
-        # 2. Move to device
         input_ids = inputs["input_ids"].to(self.device)
         attention_mask = inputs["attention_mask"].to(self.device)
+        # Get the character offsets (start, end) for each token
+        offsets = inputs["offset_mapping"][0].cpu().numpy()
         
-        # 3. Run inference
+        # 2. Model Inference
         with torch.no_grad():
-            outputs = self.model(input_ids=input_ids, attention_mask=attention_mask)
+            outputs = self.model(input_ids, attention_mask=attention_mask)
         
-        # 4. Calculate probabilities
+        # 3. Calculate Probabilities (matches GraphCodeBERT.ipynb exactly)
         logits = outputs.logits
         probs = F.softmax(logits, dim=1)
         
-        # 5. Extract scores
-        safe_score = probs[0][0].item()
-        vuln_score = probs[0][1].item()
+        # Get class (1=Vulnerable, 0=Safe)
+        vuln_score = probs[0][1].item()  # Index 0 = VULNERABLE
+        safe_score = probs[0][0].item()  # Index 1 = SAFE
         
-        # 6. Determine prediction
         prediction = "VULNERABLE" if vuln_score > safe_score else "SAFE"
         confidence = vuln_score if prediction == "VULNERABLE" else safe_score
         
         result = {
             "prediction": prediction,
-            "confidence": round(confidence, 4),
-            "vuln_score": round(vuln_score, 4),
-            "safe_score": round(safe_score, 4)
+            "confidence": round(float(confidence), 4),
+            "vuln_score": round(float(vuln_score), 4),
+            "safe_score": round(float(safe_score), 4)
         }
         
-        # 7. Extract attention weights for visualization (if requested)
+        # 4. Extract Attention for Highlighting (matches GraphCodeBERT.ipynb exactly)
         if include_attention and outputs.attentions:
-            # Get attention from the last layer (most relevant for final decision)
-            # Shape: (batch_size, num_heads, seq_len, seq_len)
             attentions = outputs.attentions[-1].cpu()
             
-            # Average attention across all heads
-            # Shape: (seq_len, seq_len)
+            # Average attention across all heads (matches GraphCodeBERT.ipynb)
             avg_attention = attentions[0].mean(dim=0)
             
-            # Get attention weights from [CLS] token (index 0) to all other tokens
-            # This tells us which tokens the model focused on to make its decision
+            # Focus on [CLS] token attention (index 0) (matches GraphCodeBERT.ipynb)
             cls_attention = avg_attention[0, :]
             
-            # Convert input_ids to tokens for display
-            tokens = self.tokenizer.convert_ids_to_tokens(input_ids[0].cpu())
+            # Split code into lines to display them one by one (matches GraphCodeBERT.ipynb)
+            code_lines = code.split('\n')
+            result["code_lines"] = code_lines
             
-            # Normalize attention weights (0-1 scale)
-            attention_weights = cls_attention.tolist()
+            # -- Step 1: Map Attention Weights to Lines (matches GraphCodeBERT.ipynb) --
+            line_scores = [[] for _ in code_lines]
             
-            # Add to result
-            result["tokens"] = tokens
-            result["attention_weights"] = attention_weights
+            # Build a mapping from character index to line index
+            char_to_line_idx = []
+            for i, line in enumerate(code_lines):
+                # +1 accounts for the newline character not present in the split list
+                char_to_line_idx.extend([i] * (len(line) + 1))
+            
+            # Iterate over tokens and assign their weight to the corresponding line
+            for idx, (start, end) in enumerate(offsets):
+                # Skip special tokens or padding (usually have 0,0 offset)
+                if start == end:
+                    continue
+                
+                # Find the line this token belongs to (using the midpoint of the token)
+                midpoint = (start + end) // 2
+                if midpoint < len(char_to_line_idx):
+                    line_idx = char_to_line_idx[midpoint]
+                    
+                    # Exclude special tokens from scoring ([CLS], [SEP], [PAD]) (matches GraphCodeBERT.ipynb)
+                    if input_ids[0][idx].item() not in [0, 1, 2]:
+                        line_scores[line_idx].append(cls_attention[idx].item())
+            
+            # -- Step 2: Aggregate Scores per Line (matches GraphCodeBERT.ipynb) --
+            final_line_scores = []
+            for scores in line_scores:
+                if scores:
+                    # Average the attention of all tokens in this line
+                    final_line_scores.append(np.mean(scores))
+                else:
+                    final_line_scores.append(0.0)
+            
+            # Normalize scores (0.0 to 1.0) for visualization
+            if max(final_line_scores) > 0:
+                max_score = max(final_line_scores)
+                final_line_scores = [s / max_score for s in final_line_scores]
+            
+            result["line_scores"] = final_line_scores
+        else:
+            # Always include code lines even if attention is disabled
+            code_lines = code.split('\n')
+            result["code_lines"] = code_lines
         
         return result
     
-    def predict_batch(self, files: list) -> list:
+    def predict_batch(self, files: List[Dict]) -> List[Dict]:
         """
-        Predict vulnerabilities for multiple files (or single file)
+        Predict vulnerabilities for multiple files
         
         Args:
-            files: list of file dicts with 'content' and optional metadata
-        
+            files: List of file dictionaries with 'path', 'content', etc.
+            
         Returns:
-            List of results per file
+            List of prediction results for each file
         """
-        # Ensure we can handle a single file dict
-        if isinstance(files, dict):
-            files = [files]
-        
         results = []
+        total_files = len(files)
         
-        for f in files:
-            file_path = f.get("path", "unknown")
-            filename = f.get("filename", Path(file_path).name)
-            language = f.get("language", "Unknown")
-            content = f.get("content", "")
-            
-            # Ensure content is a string (handle case where it might be a list)
-            if isinstance(content, list):
-                content = "\n".join(str(line) for line in content)
-            elif not isinstance(content, str):
-                # Convert to string if accidentally other type
-                content = str(content) if content is not None else ""
-            
-            # Skip empty content
-            if not content or not content.strip():
-                results.append({
-                    "file_path": file_path,
-                    "filename": filename,
-                    "language": language,
-                    "success": False,
-                    "error": "No content available"
-                })
-                continue
-            
+        print(f"[ML Service] Analyzing {total_files} file(s)...")
+        
+        for i, file in enumerate(files, 1):
             try:
+                file_path = file.get("path", "unknown")
+                content = file.get("content", "")
+                
+                # Skip if no content
+                if not content or not content.strip():
+                    results.append({
+                        "file_path": file_path,
+                        "filename": file.get("filename", Path(file_path).name),
+                        "language": file.get("language", "Unknown"),
+                        "success": False,
+                        "error": "No content available"
+                    })
+                    continue
+                
+                # Run prediction (with attention for visualization)
                 prediction = self.predict_single(content, include_attention=True)
+                
+                # Calculate risk level
                 risk_level = self._get_risk_level(prediction)
                 
                 result_dict = {
                     "file_path": file_path,
-                    "filename": filename,
-                    "language": language,
+                    "filename": file.get("filename", Path(file_path).name),
+                    "language": file.get("language", "Unknown"),
                     "prediction": prediction["prediction"],
                     "confidence": prediction["confidence"],
                     "vuln_score": prediction["vuln_score"],
@@ -211,24 +241,28 @@ class VulnerabilityAnalyzer:
                     "success": True
                 }
                 
-                # Include attention data if available
-                if "tokens" in prediction and "attention_weights" in prediction:
-                    result_dict["tokens"] = prediction["tokens"]
-                    result_dict["attention_weights"] = prediction["attention_weights"]
+                # Add attention data if available (matches notebook output)
+                # Returns line-level average attention weights (not per-token)
+                if "line_scores" in prediction:
+                    result_dict["line_scores"] = prediction["line_scores"]
+                if "code_lines" in prediction:
+                    result_dict["code_lines"] = prediction["code_lines"]
                 
                 results.append(result_dict)
-            
+                
+                print(f"[ML Service] [{i}/{total_files}] {file_path}: {prediction['prediction']} ({prediction['confidence']:.2%})")
+                
             except Exception as e:
+                print(f"[ML Service] Error analyzing {file.get('path', 'unknown')}: {e}")
                 results.append({
-                    "file_path": file_path,
-                    "filename": filename,
-                    "language": language,
+                    "file_path": file.get("path", "unknown"),
+                    "filename": file.get("filename", "unknown"),
+                    "language": file.get("language", "Unknown"),
                     "success": False,
                     "error": str(e)
                 })
+        
         return results
-
-
     
     def _get_risk_level(self, prediction: Dict) -> str:
         """
@@ -261,19 +295,19 @@ _model_path = None
 def get_analyzer(model_path: Optional[str] = None) -> VulnerabilityAnalyzer:
     """
     Get or create analyzer instance (singleton pattern)
+    Matches GraphCodeBERT.ipynb - uses base model by default
     
     Args:
-        model_path: Path to model directory (optional, uses default if not provided)
+        model_path: Path to model directory (optional, uses base GraphCodeBERT model if not provided)
         
     Returns:
         VulnerabilityAnalyzer instance
     """
     global _analyzer_instance, _model_path
     
-    # Use default path if not provided
+    # Use base model by default (matches GraphCodeBERT.ipynb)
     if model_path is None:
-        default_path = Path(__file__).parent.parent.parent / "ml_models" / "Model2_Transfer_OOD"
-        model_path = str(default_path)
+        model_path = "microsoft/graphcodebert-base"
     
     # Create new instance if:
     # 1. No instance exists yet, OR
@@ -313,4 +347,3 @@ if __name__ == "__main__":
     # Run test if executed directly
     print("Running ML Service Test...")
     test_analyzer()
-
