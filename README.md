@@ -102,6 +102,7 @@ Key environment variables:
 │   ├── services/        # Dependency & ML analysis services
 │   └── core/            # Scanner & ML inference logic
 ├── fyp_dashboard/       # React frontend
+├── ml_models            # Fine-tuned Vulnerability detection model
 └── requirements.txt     # Python dependencies
 ```
 
