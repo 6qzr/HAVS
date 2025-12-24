@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """
-Main entry point to start all microservices
-Starts Dependency Scanner, ML Analysis, and Main API services
+Main entry point to start the API service (for local development)
+Note: For deployment (Render), use: uvicorn backend.api:app --host 0.0.0.0 --port $PORT
+This file is only used by start.sh for local development.
+
+The API service now includes ML and dependency scanning directly (no separate services needed).
 """
 
 import subprocess
@@ -13,18 +16,6 @@ from pathlib import Path
 
 # Service configurations
 SERVICES = [
-    {
-        "name": "Dependency Scanner Service",
-        "module": "backend.services.dependency_scanner:app",
-        "port": 8001,
-        "icon": "📦"
-    },
-    {
-        "name": "ML Analysis Service",
-        "module": "backend.services.ml_analysis:app",
-        "port": 8002,
-        "icon": "🤖"
-    },
     {
         "name": "Main API",
         "module": "backend.api:app",

@@ -24,52 +24,131 @@ from backend.core.ml_service import get_analyzer
 
 app = FastAPI(
     title="Vulnerability Scanner API",
-    description="Main API orchestrator for vulnerability scanning services.",
+    description="Unified API for vulnerability scanning (includes dependency scanning and ML analysis).",
     version="1.0.0",
 )
 
-# Service URLs
-DEPENDENCY_SCANNER_URL = "http://localhost:8001"
-ML_ANALYSIS_URL = "http://localhost:8002"
-
 def call_dependency_scanner(dependency_files: list) -> dict:
     """
-    Call Dependency Scanner Service to scan dependency files
+    Scan dependency files for vulnerabilities (direct call, no separate service needed)
     
     Args:
         dependency_files: List of dicts with 'path' and 'content'
         
     Returns:
-        Scan results from dependency scanner service
+        Scan results with dependencies and CVEs
     """
+    if not dependency_files:
+        return {
+            "success": True,
+            "dependencies": [],
+            "summary": {
+                "total_deps_scanned": 0,
+                "deps_with_vulnerabilities": 0,
+                "total_vulnerabilities": 0,
+                "vulnerabilities_by_severity": {
+                    "critical": 0,
+                    "high": 0,
+                    "medium": 0,
+                    "low": 0
+                }
+            }
+        }
+    
+    # Create temporary directory to save files
+    temp_dir = tempfile.mkdtemp(prefix='dep_scan_')
+    
     try:
-        response = requests.post(
-            f"{DEPENDENCY_SCANNER_URL}/scan-dependencies",
-            json={"files": dependency_files},
-            timeout=300  # 5 minute timeout
-        )
-        response.raise_for_status()
-        return response.json()
-    except requests.exceptions.ConnectionError:
-        raise HTTPException(
-            status_code=503,
-            detail="Dependency Scanner Service is not available. Please start it on port 8001."
-        )
-    except requests.exceptions.Timeout:
-        raise HTTPException(
-            status_code=504,
-            detail="Dependency Scanner Service timeout"
-        )
-    except requests.exceptions.HTTPError as e:
-        raise HTTPException(
-            status_code=e.response.status_code,
-            detail=f"Dependency Scanner Service error: {e.response.text}"
-        )
+        all_deps = []
+        
+        # Process each dependency file
+        for file in dependency_files:
+            file_path_str = file.get("path", "")
+            file_content = file.get("content", "")
+            
+            if not file_path_str or not file_content:
+                continue
+            
+            file_path = Path(temp_dir) / Path(file_path_str).name
+            
+            # Save file content
+            file_path.write_text(file_content, encoding='utf-8')
+            
+            # Parse based on file type
+            filename_lower = file_path_str.lower()
+            
+            try:
+                if filename_lower.endswith('package.json'):
+                    deps = parse_package_json(file_path)
+                    all_deps.extend(deps)
+                elif filename_lower.endswith('requirements.txt'):
+                    deps = parse_requirements_txt(file_path)
+                    all_deps.extend(deps)
+                elif filename_lower.endswith('pom.xml'):
+                    deps = parse_pom_xml(file_path)
+                    all_deps.extend(deps)
+            except Exception as e:
+                # Skip files that can't be parsed
+                continue
+        
+        if not all_deps:
+            return {
+                "success": True,
+                "dependencies": [],
+                "summary": {
+                    "total_deps_scanned": 0,
+                    "deps_with_vulnerabilities": 0,
+                    "total_vulnerabilities": 0,
+                    "vulnerabilities_by_severity": {
+                        "critical": 0,
+                        "high": 0,
+                        "medium": 0,
+                        "low": 0
+                    }
+                }
+            }
+        
+        # Scan each dependency for vulnerabilities
+        for dep in all_deps:
+            dep["cves"] = find_vulnerabilities(dep)
+        
+        # Filter dependencies - only include those with vulnerabilities
+        vulnerable_deps = [dep for dep in all_deps if dep.get("cves")]
+        
+        # Calculate statistics
+        severity_counts = {"critical": 0, "high": 0, "medium": 0, "low": 0}
+        total_cves = 0
+        
+        for dep in vulnerable_deps:
+            for cve in dep.get("cves", []):
+                severity = cve.get("severity", "unknown")
+                if severity in severity_counts:
+                    severity_counts[severity] += 1
+                total_cves += 1
+        
+        # Build result
+        result = {
+            "success": True,
+            "dependencies": vulnerable_deps,
+            "summary": {
+                "total_deps_scanned": len(all_deps),
+                "deps_with_vulnerabilities": len(vulnerable_deps),
+                "total_vulnerabilities": total_cves,
+                "vulnerabilities_by_severity": severity_counts
+            }
+        }
+        
+        return result
+        
     except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error calling Dependency Scanner Service: {str(e)}"
-)
+        # Return error result instead of raising exception (matches old behavior)
+        return {
+            "success": False,
+            "error": f"Dependency scan failed: {str(e)}"
+        }
+    finally:
+        # Cleanup
+        shutil.rmtree(temp_dir, ignore_errors=True)
 
 app.add_middleware(
     CORSMiddleware,
@@ -407,12 +486,9 @@ async def scan_upload_endpoint(
             # Call Dependency Scanner Service if dependency files found
             dep_result = None
             if dependency_files_for_service:
-                try:
-                    dep_result = call_dependency_scanner(dependency_files_for_service)
-                except HTTPException:
-                    raise
-                except Exception as e:
-                    # If dependency scanner fails, continue without dependencies
+                dep_result = call_dependency_scanner(dependency_files_for_service)
+                # If dependency scanner fails, continue without dependencies
+                if not dep_result.get("success"):
                     dep_result = {
                         "success": True,
                         "dependencies": [],
@@ -555,12 +631,9 @@ async def scan_upload_endpoint(
             # Call Dependency Scanner Service if dependency files found
             dep_result = None
             if dependency_files_for_service:
-                try:
-                    dep_result = call_dependency_scanner(dependency_files_for_service)
-                except HTTPException:
-                    raise
-                except Exception as e:
-                    # If dependency scanner fails, continue without dependencies
+                dep_result = call_dependency_scanner(dependency_files_for_service)
+                # If dependency scanner fails, continue without dependencies
+                if not dep_result.get("success"):
                     dep_result = {
                         "success": True,
                         "dependencies": [],
@@ -719,8 +792,9 @@ async def ml_predict_endpoint(payload: dict):
                     detail=f"File {file.get('path', f'#{i}')} has empty content"
                 )
         
-        # Call ML Analysis Service
+        # Call ML Analysis directly (no separate service needed)
         try:
+            import time
             # Prepare files for ML service
             files_for_ml = []
             for file in files:
@@ -732,41 +806,65 @@ async def ml_predict_endpoint(payload: dict):
                     "lines_of_code": file.get("lines_of_code", 0)
                 })
             
-            response = requests.post(
-                f"{ML_ANALYSIS_URL}/predict",
-                json={"files": files_for_ml},
-                timeout=300  # 5 minute timeout
-            )
-            response.raise_for_status()
-            ml_result = response.json()
+            # Get analyzer (singleton, cached after first load)
+            try:
+                analyzer = get_analyzer()
+            except FileNotFoundError as e:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"ML model not found: {str(e)}"
+                )
+            except Exception as e:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"ML service error: {str(e)}"
+                )
             
-            # Return ML results directly
+            # Run batch prediction
+            start_time = time.time()
+            try:
+                predictions = analyzer.predict_batch(files_for_ml)
+            except Exception as e:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"ML prediction failed: {str(e)}"
+                )
+            
+            prediction_time = time.time() - start_time
+            
+            # Calculate summary statistics
+            vulnerable_count = sum(
+                1 for p in predictions
+                if p.get("success") and p.get("prediction") == "VULNERABLE"
+            )
+            safe_count = sum(
+                1 for p in predictions
+                if p.get("success") and p.get("prediction") == "SAFE"
+            )
+            failed_count = sum(1 for p in predictions if not p.get("success"))
+            
+            # Format results similar to ML service response
+            ml_result = {
+                "success": True,
+                "predictions": predictions,
+                "summary": {
+                    "total_files": len(files_for_ml),
+                    "vulnerable_files": vulnerable_count,
+                    "safe_files": safe_count,
+                    "failed_files": failed_count,
+                    "analysis_time_seconds": round(prediction_time, 2)
+                }
+            }
+            
+            # Return ML results
             return ml_result
             
-        except requests.exceptions.ConnectionError:
-            raise HTTPException(
-                status_code=503,
-                detail="ML Analysis Service is not available. Please start it on port 8002."
-            )
-        except requests.exceptions.Timeout:
-            raise HTTPException(
-                status_code=504,
-                detail="ML Analysis Service timeout"
-            )
-        except requests.exceptions.HTTPError as e:
-            error_detail = "Unknown error"
-            try:
-                error_detail = e.response.json().get("detail", str(e))
-            except:
-                error_detail = e.response.text if hasattr(e, 'response') else str(e)
-            raise HTTPException(
-                status_code=e.response.status_code if hasattr(e, 'response') else 500,
-                detail=f"ML Analysis Service error: {error_detail}"
-            )
+        except HTTPException:
+            raise
         except Exception as e:
             raise HTTPException(
                 status_code=500,
-                detail=f"Error calling ML Analysis Service: {str(e)}"
+                detail=f"ML analysis failed: {str(e)}"
             )
         
     except HTTPException:

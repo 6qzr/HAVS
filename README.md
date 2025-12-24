@@ -41,7 +41,7 @@ nano .env
 
 The script will:
 - Load environment variables from `.env`
-- Start backend services (ports 8000, 8001, 8002)
+- Start backend API service (port 8000, includes ML & dependency scanning)
 - Install frontend dependencies (if needed)
 - Start frontend dev server
 
@@ -98,9 +98,9 @@ Key environment variables:
 ## 📝 Project Structure
 
 ```
-├── backend/              # FastAPI microservices
-│   ├── api.py           # Main API
-│   ├── services/        # Dependency & ML analysis services
+├── backend/              # FastAPI backend
+│   ├── api.py           # Main API (includes ML & dependency scanning)
+│   ├── services/        # Email service
 │   └── core/            # Scanner & ML inference logic
 ├── fyp_dashboard/       # React frontend
 └── requirements.txt     # Python dependencies

@@ -26,15 +26,16 @@ if [ -z "$NVD_API_KEY" ]; then
 fi
 
 echo ""
-echo "Starting Backend Services..."
+echo "Starting Backend API..."
 echo "=========================================="
 
-# Start backend in background
+# Start backend API in background
+# Note: Uses main.py which starts the API service (includes ML and dependency scanning)
 python3 backend/main.py &
 BACKEND_PID=$!
 
 # Wait for backend to start
-echo "Waiting for backend to initialize..."
+echo "Waiting for backend API to initialize..."
 sleep 5
 
 echo ""
@@ -59,8 +60,10 @@ echo "✅ Application Started!"
 echo "=========================================="
 echo ""
 echo "Services:"
-echo "  - Backend API: http://localhost:8000"
+echo "  - Backend API: http://localhost:8000 (includes ML & dependency scanning)"
 echo "  - Frontend:    http://localhost:5173"
+echo ""
+echo "Note: API service includes ML analysis and dependency scanning (no separate services needed)"
 echo ""
 echo "Press Ctrl+C to stop all services"
 echo ""
