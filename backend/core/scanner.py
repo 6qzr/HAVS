@@ -641,6 +641,271 @@ def export_to_csv(result, output_file):
                         cve.get('url', '')
                     ])
 
+def export_to_pdf(result, output_file):
+    """Export results to PDF with formatted report"""
+    try:
+        from reportlab.lib.pagesizes import letter, A4
+        from reportlab.lib import colors
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        from reportlab.lib.units import inch
+        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak, Image
+        from reportlab.pdfgen import canvas
+    except ImportError:
+        raise ImportError(
+            "reportlab is required for PDF export. Install it with: pip install reportlab"
+        )
+    
+    # Try to find logo file
+    logo_path = None
+    project_root = Path(__file__).parent.parent.parent
+    possible_logo_paths = [
+        project_root / 'fyp_dashboard' / 'src' / 'assets' / 'logo.png',
+        project_root / 'fyp_dashboard' / 'public' / 'logo.png',
+        project_root / 'logo.png',
+    ]
+    
+    for path in possible_logo_paths:
+        if path.exists():
+            logo_path = str(path)
+            break
+    
+    doc = SimpleDocTemplate(output_file, pagesize=letter,
+                            rightMargin=72, leftMargin=72,
+                            topMargin=72, bottomMargin=18)
+    
+    # Container for the 'Flowable' objects
+    elements = []
+    styles = getSampleStyleSheet()
+    
+    # Add logo if available (at top right)
+    if logo_path:
+        try:
+            logo = Image(logo_path, width=1.0*inch, height=1.0*inch)
+            # Create a table to position logo at top right
+            logo_table = Table([[logo]], colWidths=[6.5*inch])
+            logo_table.setStyle(TableStyle([
+                ('ALIGN', (0, 0), (-1, -1), 'RIGHT'),
+                ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+            ]))
+            elements.append(logo_table)
+            elements.append(Spacer(1, 0.1*inch))
+        except Exception as e:
+            # If logo fails to load, continue without it
+            pass
+    
+    # Title
+    title_style = ParagraphStyle(
+        'CustomTitle',
+        parent=styles['Heading1'],
+        fontSize=24,
+        textColor=colors.HexColor('#1e293b'),
+        spaceAfter=30,
+        alignment=1  # Center alignment
+    )
+    title = Paragraph("Vulnerability Scan Report", title_style)
+    elements.append(title)
+    elements.append(Spacer(1, 0.2*inch))
+    
+    # Header Information
+    header_style = ParagraphStyle(
+        'Header',
+        parent=styles['Normal'],
+        fontSize=11,
+        spaceAfter=6
+    )
+    
+    repo_path = result.get('repo_path', 'Unknown')
+    scanned_at = result.get('scanned_at', 'N/A')
+    duration = result.get('scan_duration_seconds', 0)
+    
+    elements.append(Paragraph(f"<b>Repository:</b> {repo_path}", header_style))
+    elements.append(Paragraph(f"<b>Scan Date:</b> {scanned_at}", header_style))
+    elements.append(Paragraph(f"<b>Duration:</b> {duration:.2f} seconds", header_style))
+    elements.append(Spacer(1, 0.3*inch))
+    
+    # Summary Section
+    summary_style = ParagraphStyle(
+        'SummaryTitle',
+        parent=styles['Heading2'],
+        fontSize=16,
+        textColor=colors.HexColor('#475569'),
+        spaceAfter=12
+    )
+    elements.append(Paragraph("Summary", summary_style))
+    
+    summary = result.get('summary', {})
+    summary_data = [
+        ['Metric', 'Count'],
+        ['Total Dependencies Scanned', summary.get('total_deps_scanned', 0)],
+        ['Dependencies with Vulnerabilities', summary.get('deps_with_vulnerabilities', 0)],
+        ['Total Vulnerabilities', summary.get('total_vulnerabilities', 0)],
+    ]
+    
+    # Add severity breakdown
+    severity_counts = summary.get('vulnerabilities_by_severity', {})
+    if severity_counts:
+        summary_data.append(['Critical Severity', severity_counts.get('CRITICAL', 0)])
+        summary_data.append(['High Severity', severity_counts.get('HIGH', 0)])
+        summary_data.append(['Medium Severity', severity_counts.get('MEDIUM', 0)])
+        summary_data.append(['Low Severity', severity_counts.get('LOW', 0)])
+    
+    summary_table = Table(summary_data, colWidths=[4*inch, 1.5*inch])
+    summary_table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#64748b')),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+        ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, 0), 11),
+        ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+        ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+        ('GRID', (0, 0), (-1, -1), 1, colors.grey),
+        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f8fafc')]),
+    ]))
+    elements.append(summary_table)
+    elements.append(Spacer(1, 0.3*inch))
+    
+    # Vulnerabilities Section - Grouped by Package (matching Vulnerabilities page)
+    vulnerable_deps = [dep for dep in result.get('dependencies', []) if dep.get('cves')]
+    
+    if vulnerable_deps:
+        vuln_style = ParagraphStyle(
+            'VulnTitle',
+            parent=styles['Heading2'],
+            fontSize=16,
+            textColor=colors.HexColor('#475569'),
+            spaceAfter=12
+        )
+        elements.append(Paragraph(f"Vulnerable Dependencies ({len(vulnerable_deps)})", vuln_style))
+        
+        # Helper function to deduplicate CWE values
+        def deduplicate_cwe(cwe_string):
+            if not cwe_string or cwe_string == 'N/A':
+                return 'N/A'
+            cwe_list = [c.strip() for c in cwe_string.split(',') if c.strip()]
+            unique_cwes = list(dict.fromkeys(cwe_list))  # Preserve order, remove duplicates
+            return ', '.join(unique_cwes)
+        
+        # Limit packages and CVEs to keep PDF manageable
+        max_packages = 20
+        max_cves = 100
+        packages_to_show = vulnerable_deps[:max_packages]
+        total_cves_shown = 0
+        
+        for dep_idx, dep in enumerate(packages_to_show):
+            # Package Header
+            package_name = dep.get('name', 'N/A')
+            package_version = dep.get('version', 'N/A')
+            package_ecosystem = dep.get('ecosystem', 'N/A')
+            cve_count = len(dep.get('cves', []))
+            
+            package_header_style = ParagraphStyle(
+                'PackageHeader',
+                parent=styles['Heading3'],
+                fontSize=12,
+                textColor=colors.HexColor('#1e293b'),
+                spaceAfter=6,
+                backColor=colors.HexColor('#e5e7eb')
+            )
+            elements.append(Paragraph(f"<b>{package_name}</b>", package_header_style))
+            
+            package_meta_style = ParagraphStyle(
+                'PackageMeta',
+                parent=styles['Normal'],
+                fontSize=9,
+                textColor=colors.HexColor('#64748b'),
+                spaceAfter=8
+            )
+            elements.append(Paragraph(
+                f"v{package_version} • {package_ecosystem} • {cve_count} {'CVE' if cve_count == 1 else 'CVEs'}",
+                package_meta_style
+            ))
+            
+            # CVE Table for this package
+            cves = dep.get('cves', [])
+            cves_to_show = cves[:min(len(cves), max_cves - total_cves_shown)]
+            
+            if cves_to_show:
+                # CVE Table Header
+                cve_header_data = [['CVE ID', 'Severity', 'CVSS', 'CWE', 'Affected Versions', 'CISA KEV']]
+                
+                # CVE Rows
+                for cve in cves_to_show:
+                    cve_id = cve.get('cve_id', 'N/A')
+                    # Only add [KEV] if explicitly "Yes" (not just truthy)
+                    cisa_kev_value = cve.get('cisa_kev', 'No')
+                    if cisa_kev_value == 'Yes':
+                        cve_id = f"{cve_id} [KEV]"
+                    
+                    severity = cve.get('severity', 'N/A').upper()
+                    cvss = str(cve.get('cvss_score', 'N/A')) if cve.get('cvss_score') is not None else 'N/A'
+                    cwe = deduplicate_cwe(cve.get('cwe', 'N/A'))
+                    
+                    affected_versions = cve.get('affected_versions', [])
+                    if affected_versions:
+                        versions_text = '; '.join(affected_versions) if isinstance(affected_versions, list) else str(affected_versions)
+                    else:
+                        versions_text = 'All versions'
+                    
+                    cisa_kev = 'Yes' if cisa_kev_value == 'Yes' else 'No'
+                    
+                    cve_header_data.append([cve_id, severity, cvss, cwe, versions_text, cisa_kev])
+                    total_cves_shown += 1
+                    
+                    if total_cves_shown >= max_cves:
+                        break
+                
+                if len(cve_header_data) > 1:  # More than just header
+                    cve_table = Table(cve_header_data, colWidths=[1.3*inch, 0.7*inch, 0.5*inch, 1.0*inch, 1.8*inch, 0.5*inch])
+                    cve_table.setStyle(TableStyle([
+                        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#64748b')),
+                        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                        ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                        ('FONTSIZE', (0, 0), (-1, 0), 8),
+                        ('FONTSIZE', (0, 1), (-1, -1), 7),
+                        ('BOTTOMPADDING', (0, 0), (-1, 0), 10),
+                        ('BACKGROUND', (0, 1), (-1, -1), colors.white),
+                        ('GRID', (0, 0), (-1, -1), 0.3, colors.grey),
+                        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f8fafc')]),
+                        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+                        ('LEFTPADDING', (0, 0), (-1, -1), 4),
+                        ('RIGHTPADDING', (0, 0), (-1, -1), 4),
+                    ]))
+                    elements.append(cve_table)
+                    elements.append(Spacer(1, 0.2*inch))
+            
+            # Add spacing between packages
+            if dep_idx < len(packages_to_show) - 1:
+                elements.append(Spacer(1, 0.15*inch))
+            
+            if total_cves_shown >= max_cves:
+                break
+        
+        # Add note if truncated
+        total_packages = len(vulnerable_deps)
+        total_cves = sum(len(dep.get('cves', [])) for dep in vulnerable_deps)
+        
+        if total_packages > max_packages or total_cves_shown >= max_cves:
+            note_style = ParagraphStyle(
+                'Note',
+                parent=styles['Normal'],
+                fontSize=8,
+                textColor=colors.grey,
+                fontName='Helvetica-Oblique'
+            )
+            elements.append(Spacer(1, 0.1*inch))
+            note_text = ""
+            if total_packages > max_packages and total_cves_shown >= max_cves:
+                note_text = f"<i>Note: Showing first {len(packages_to_show)} packages with {total_cves_shown} CVEs. Total: {total_packages} packages, {total_cves} CVEs. Use JSON or CSV export for complete data.</i>"
+            elif total_packages > max_packages:
+                note_text = f"<i>Note: Showing first {len(packages_to_show)} of {total_packages} packages. Use JSON or CSV export for complete data.</i>"
+            elif total_cves_shown >= max_cves:
+                note_text = f"<i>Note: Showing first {total_cves_shown} of {total_cves} CVEs. Use JSON or CSV export for complete data.</i>"
+            elements.append(Paragraph(note_text, note_style))
+    
+    # Build PDF
+    doc.build(elements)
+
 # ============= MAIN SCANNER API =============
 def scan_dependencies(repo_path, output_format='json', output_file=None, progress_callback=None):
     """
@@ -648,7 +913,7 @@ def scan_dependencies(repo_path, output_format='json', output_file=None, progres
     
     Args:
         repo_path: Local path or URL to scan
-        output_format: 'json', 'csv', or 'both'
+        output_format: 'json', 'csv', 'pdf', or 'both' (for json+csv)
         output_file: Optional output file path
         progress_callback: Optional callback function(stage, percentage, message)
     
@@ -848,6 +1113,10 @@ def scan_dependencies(repo_path, output_format='json', output_file=None, progres
             if output_format == 'json' or output_format == 'both':
                 json_file = output_file if output_file.endswith('.json') else f"{output_file}.json"
                 Path(json_file).write_text(json.dumps(result, indent=2), encoding='utf-8')
+            
+            if output_format == 'pdf':
+                pdf_file = output_file if output_file.endswith('.pdf') else f"{output_file}.pdf"
+                export_to_pdf(result, pdf_file)
         
         return result
         

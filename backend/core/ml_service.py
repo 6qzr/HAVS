@@ -27,6 +27,10 @@ class VulnerabilityAnalyzer:
         Args:
             model_path: Path to model (optional, uses base GraphCodeBERT model if not provided)
         """
+        # Track prediction statistics for bias detection
+        self.prediction_history = {"SAFE": 0, "VULNERABLE": 0}
+        self.logit_diffs = []  # Track logit differences to detect bias
+        self.is_base_model = False  # Track if we're using base (untrained) model
         # Use base model by default (matches GraphCodeBERT.ipynb)
         if model_path is None:
             model_path = "microsoft/graphcodebert-base"
@@ -61,6 +65,13 @@ class VulnerabilityAnalyzer:
         )
         self.model.to(self.device)
         self.model.eval()
+        
+        # Warn if using base model (not fine-tuned)
+        if model_path == "microsoft/graphcodebert-base":
+            self.is_base_model = True
+            print("[ML Warning] Using base model without fine-tuning. Predictions may be unreliable.")
+            print("[ML Warning] Consider using a fine-tuned model for better accuracy.")
+            print("[ML Warning] Applying aggressive bias correction for base model.")
         
         load_time = time.time() - start_time
         print(f"[ML Service] Model loaded successfully in {load_time:.2f}s")
@@ -114,16 +125,80 @@ class VulnerabilityAnalyzer:
         with torch.no_grad():
             outputs = self.model(input_ids, attention_mask=attention_mask)
         
-        # 3. Calculate Probabilities (matches GraphCodeBERT.ipynb exactly)
+        # 3. Calculate Probabilities and Logits
         logits = outputs.logits
         probs = F.softmax(logits, dim=1)
         
-    # Get class (1=Vulnerable, 0=Safe)
-        vuln_score = probs[0][1].item()  # Index 0 = VULNERABLE
-        safe_score = probs[0][0].item()  # Index 1 = SAFE
+        # Get raw logits (before softmax) - more informative for untrained models
+        raw_logits = logits[0].cpu().numpy()
+        logit_safe = raw_logits[0].item()  # Index 0 = SAFE
+        logit_vuln = raw_logits[1].item()  # Index 1 = VULNERABLE
         
-        prediction = "VULNERABLE" if vuln_score > safe_score else "SAFE"
-        confidence = vuln_score if prediction == "VULNERABLE" else safe_score
+        # Get probabilities
+        safe_score = probs[0][0].item()  # Index 0 = SAFE
+        vuln_score = probs[0][1].item()  # Index 1 = VULNERABLE
+        
+        # Debug: Print raw logits and probabilities to diagnose issues
+        print(f"[ML Debug] Raw logits: safe={logit_safe:.4f}, vuln={logit_vuln:.4f}")
+        print(f"[ML Debug] Probabilities: safe={safe_score:.4f}, vuln={vuln_score:.4f}")
+        
+        # Calculate logit difference (more stable than probability difference)
+        logit_diff = logit_vuln - logit_safe
+        
+        # Track logit differences for bias detection
+        self.logit_diffs.append(logit_diff)
+        if len(self.logit_diffs) > 100:  # Keep only recent history
+            self.logit_diffs.pop(0)
+        
+        # Detect bias: if logit_diff is consistently negative, model is biased toward SAFE
+        # Calculate average logit difference to detect systematic bias
+        avg_logit_diff = np.mean(self.logit_diffs) if self.logit_diffs else 0.0
+        
+        # For base models (not fine-tuned), use aggressive bias correction
+        # Base models often have randomly initialized classification heads that are biased
+        # Use a negative threshold to compensate for bias toward SAFE
+        if self.is_base_model:
+            # Base model: use more aggressive negative threshold
+            if len(self.logit_diffs) > 5:
+                # After a few predictions, use adaptive threshold based on observed bias
+                if avg_logit_diff < -0.3:
+                    print(f"[ML Warning] Detected strong bias toward SAFE (avg_logit_diff={avg_logit_diff:.4f}). Applying aggressive correction.")
+                    # Use a threshold that compensates for the bias - make it more negative
+                    bias_threshold = avg_logit_diff * 0.7  # More aggressive correction
+                elif avg_logit_diff < -0.1:
+                    bias_threshold = -0.3  # Moderate bias correction
+                else:
+                    bias_threshold = -0.2  # Default negative threshold for base models
+            else:
+                # For first few predictions, use a more aggressive negative threshold
+                # This helps when the model is biased from the start
+                bias_threshold = -0.25
+        else:
+            # Fine-tuned model: use standard threshold
+            bias_threshold = 0.0
+        
+        # If logits are very close, the model is uncertain
+        if abs(logit_diff) < 0.05:
+            print(f"[ML Warning] Model outputs are very close (logit_diff={logit_diff:.4f}). Model may not be fine-tuned.")
+            # When very uncertain, use probability-based decision with lower threshold
+            if vuln_score > 0.4:  # Lower threshold for VULNERABLE
+                prediction = "VULNERABLE"
+                confidence = vuln_score
+            else:
+                prediction = "SAFE"
+                confidence = safe_score
+        else:
+            # Use logit difference for prediction (more robust than probabilities)
+            # Apply bias correction threshold - more negative threshold = more likely to predict VULNERABLE
+            if logit_diff > bias_threshold:
+                prediction = "VULNERABLE"
+                confidence = vuln_score
+            else:
+                prediction = "SAFE"
+                confidence = safe_score
+        
+        # Track prediction for bias detection
+        self.prediction_history[prediction] += 1
         
         result = {
             "prediction": prediction,

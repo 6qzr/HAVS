@@ -23,3 +23,8 @@ safetensors>=0.4.0
 # Optional but recommended for better performance
 # accelerate>=0.20.0  # For faster model loading
 # sentencepiece>=0.1.99  # For certain tokenizers
+
+# ============================================================
+# EXPORT DEPENDENCIES
+# ============================================================
+reportlab>=4.0.0  # For PDF export functionality
