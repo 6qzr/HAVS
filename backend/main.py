@@ -73,23 +73,33 @@ def start_service(service_config):
     
     # Build uvicorn command
     cmd = [
-        sys.executable, "-m", "uvicorn",
+        sys.executable, "-u", "-m", "uvicorn",
         module,
         "--host", "0.0.0.0",
         "--port", str(port)
     ]
+
     
     if reload:
         cmd.append("--reload")
     
     print(f"{icon} Starting {name} (Port {port})...")
     
+    # Use log files instead of pipes to avoid hangs when buffers fill up
+    log_dir = Path("logs")
+    log_dir.mkdir(exist_ok=True)
+    log_file_path = log_dir / f"{name.lower().replace(' ', '_')}.log"
+    
     try:
+        log_file = open(log_file_path, "a", encoding="utf-8")
+        log_file.write(f"\n\n--- Starting {name} at {time.strftime('%Y-%m-%d %H:%M:%S')} ---\n")
+        log_file.flush()
+        
         # Start process
         process = subprocess.Popen(
             cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stdout=log_file,
+            stderr=log_file,
             text=True
         )
         
@@ -98,11 +108,11 @@ def start_service(service_config):
         
         if process.poll() is None:
             print(f"   ✅ {name} started (PID: {process.pid})")
+            print(f"      Logs: {log_file_path}")
             return process
         else:
-            stdout, stderr = process.communicate()
             print(f"   ❌ {name} failed to start")
-            print(f"   Error: {stderr}")
+            print(f"      Check logs: {log_file_path}")
             return None
             
     except Exception as e:

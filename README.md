@@ -1,146 +1,115 @@
-# 🔒 Vulnerability Scanner with ML Detection
+# 🔒 HAVS: Hybrid Automated Vulnerability Scanner
 
-A comprehensive security scanning system that combines traditional CVE scanning with AI-powered source code analysis for detecting vulnerabilities in your projects.
+A professional-grade security analysis platform for modern software development. **HAVS** (Hybrid Automated Vulnerability Scanner) combines traditional CVE-based dependency analysis with a **Fine-tuned UniXcoder AI model** to deliver high-precision security insights.
 
-## ✨ Features
-
-- 🔍 **Dependency Scanning** - Detect CVEs in npm, pip, and Maven dependencies
-- 🤖 **ML-Powered Analysis** - AI source code vulnerability detection using GraphCodeBERT
-- 📤 **Multiple Upload Methods** - GitHub URL, ZIP archives, or individual files
-- ⚡ **Real-time Progress** - WebSocket updates for long-running scans
-- 🔄 **GitHub Actions Integration** - Automated scanning on push/PR
-- 📊 **Comprehensive Reports** - Detailed vulnerability analysis with CVSS scores
-
-## 🚀 Quick Start
-
-**Prerequisites:** Python 3.7+, Node.js 16+
-
-### 1. Install Dependencies
-
-```bash
-pip install -r requirements.txt
-cd fyp_dashboard && npm install
-```
-
-### 2. Configure Environment
-
-```bash
-# Copy environment template
-cp env.example .env
-
-# Add your NVD API key (get from: https://nvd.nist.gov/developers/request-an-api-key)
-nano .env
-```
-
-### 3. Run Application
-
-```bash
-# Start both frontend and backend (single command)
-./start.sh
-```
-
-The script will:
-- Load environment variables from `.env`
-- Start backend services (ports 8000, 8001, 8002)
-- Install frontend dependencies (if needed)
-- Start frontend dev server
-
-**Access:**
-- Frontend: http://localhost:5173
-- API Docs: http://localhost:8000/docs
-
-**Stop:** Press `Ctrl+C` to stop all services
-
-## 🛠️ Tech Stack
-
-**Backend:** FastAPI, PyTorch, Transformers, NVD API  
-**Frontend:** React, Vite, WebSocket  
-**ML Model:** GraphCodeBERT (base model from HuggingFace) with UnixCoder tokenizer
-
-## 📊 Supported Files
-
-**Dependencies:** `package.json`, `requirements.txt`, `pom.xml`  
-**Source Code:** `.py`, `.java`, `.c`, `.cpp`  
-**Archives:** `.zip`
-
-## 🎯 Usage Examples
-
-```bash
-# Scan GitHub repository
-Enter URL → Automatic clone and scan
-
-# Upload ZIP archive
-Drag & drop → Extract and analyze
-
-# Multiple files
-Select files → Upload → Batch analysis
-```
-
-## 📚 Documentation
-
-- **API Documentation:** http://localhost:8000/docs (when running)
-- **Deployment Guide:** [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md)
-- **ML Model:** GraphCodeBERT base model (automatically downloaded from HuggingFace on first use)
-- **Environment Setup:** See `env.example` template
-
-## 🔒 Security
-
-- File size limits (100MB per file, 500MB extracted)
-- Path traversal protection
-- ZIP bomb prevention
-- Automatic cleanup of temporary files
-
-## ⚙️ Configuration
-
-Key environment variables:
-- `NVD_API_KEY` - Required for optimal scanning speed (50 req/30s vs 5 req/30s)
-
-## 📦 Deployment
-
-Ready to deploy? See **[DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md)** for:
-- 🚀 Push to GitHub (with Git LFS)
-- 🌐 Deploy to Render (free hosting)
-- ⚙️ Setup GitHub Actions (automated scanning)
-
-## 📝 Project Structure
-
-```
-├── backend/              # FastAPI microservices
-│   ├── api.py           # Main API
-│   ├── services/        # Dependency & ML analysis services
-│   └── core/            # Scanner & ML inference logic
-├── fyp_dashboard/       # React frontend
-└── requirements.txt     # Python dependencies
-```
-
-## 🐛 Troubleshooting
-
-**Common Issues:**
-
-```bash
-# Port already in use
-lsof -ti:8000 | xargs kill -9
-lsof -ti:5173 | xargs kill -9
-
-# Permission denied for start.sh
-chmod +x start.sh
-
-# Missing .env file
-cp env.example .env
-nano .env  # Add your NVD_API_KEY
-```
-
-For deployment issues, see [DEPLOYMENT_GUIDE.md](DEPLOYMENT_GUIDE.md).
-
-## 🤝 Contributing
-
-This is a Final Year Project (FYP). Contributions and feedback are welcome!
-
-## 📄 License
-
-MIT License
+[![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)](https://www.python.org/)
+[![React](https://img.shields.io/badge/React-18+-blue.svg)](https://reactjs.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ---
 
-**Ready to scan!** 🚀
+## � Key Features
+
+*   🤖 **AI-Powered Core**: Leverages a fine-tuned **UniXcoder** model for deep semantic analysis of source code.
+*   ⚖️ **High Precision (Z-Score)**: Uses statistical Z-score adaptive thresholding to eliminate noise and detect subtle vulnerabilities.
+*   � **Dependency Scanning**: Automatic CVE detection across `npm` (package.json), `pip` (requirements.txt), and `Maven` (pom.xml).
+*   🔍 **Pattern-Matching Engine**: Supplemented by a regex-based pattern engine for 100% reliable detection of common injection points.
+*   📤 **Flexible Analysis**: Support for GitHub URLs, ZIP uploads, or individual file drops.
+*   📊 **Real-time Dashboard**: Interactive React-based dashboard with real-time scan progress via WebSockets.
+
+---
+
+## 🛠️ Tech Stack
+
+### Backend
+- **Framework**: FastAPI (Python)
+- **ML Engine**: PyTorch & HuggingFace Transformers
+- **Intelligence**: Fine-tuned UniXcoder Model
+- **Vulnerability Data**: NIST NVD API
+
+### Frontend
+- **Framework**: React.js with Vite
+- **Styling**: Vanilla CSS (Modern Aesthetics)
+- **Communication**: REST API & WebSockets
+
+---
+
+## ⚡ Quick Start
+
+### 1. Prerequisites
+- **Python 3.11+**
+- **Node.js 18+**
+- **NVD API Key** (Recommended: [Get one here](https://nvd.nist.gov/developers/request-an-api-key))
+
+### 2. Installation & Setup
+
+```bash
+# Clone the repository
+git clone https://github.com/your-username/havs.git
+cd havs
+
+# Setup Environment
+cp env.example .env
+# Edit .env and add your NVD_API_KEY
+```
+
+### 3. Running the Application
+
+**On Windows (PowerShell):**
+```powershell
+./start.ps1
+```
+
+**On Linux/Mac:**
+```bash
+chmod +x start.sh
+./start.sh
+```
+
+---
+
+## 📊 Deployment & Access
+
+Once started, the application will be available at:
+- **Frontend Dashboard**: [http://localhost:5173](http://localhost:5173)
+- **Backend API Docs**: [http://localhost:8000/docs](http://localhost:8000/docs)
+- **ML Analysis Service**: Port 8002
+- **Dependency Service**: Port 8001
+
+---
+
+## � Project Structure
+
+```text
+├── backend/
+│   ├── api/            # Main FastAPI endpoints
+│   ├── core/           # ML Logic & Scanning Engines
+│   └── services/       # Microservices (ML, Dependency)
+├── fyp_dashboard/      # React Frontend Source
+├── ml_model/           # Local model binaries & configs
+├── logs/               # Automated service logs
+└── requirements.txt    # Python dependencies
+```
+
+---
+
+## �️ Security Best Practices
+
+HAVS is designed with security in mind:
+- **Rate Limiting**: Automatic NVD API rate-limit handling.
+- **Normalization**: Code normalization to strip noise (comments/whitespace) before AI analysis.
+- **Cleanup**: Automatic temporary directory cleanup after scan completion.
+
+---
+
+## 🤝 Contributing
+
+This project was developed as a Final Year Project (FYP). We welcome contributions, bug reports, and suggestions for improving the ML model's accuracy.
+
+## 📄 License
+
+This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) file for details.
+
+---
+*Developed with ❤️ for Advanced Software Security.*
 

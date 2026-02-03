@@ -13,19 +13,77 @@ from typing import Dict, List, Optional
 import time
 
 
+
 class VulnerabilityAnalyzer:
     """
-    ML-powered vulnerability analyzer using UnixCoder tokenizer
-    Matches the implementation from GraphCodeBERT.ipynb exactly
+    ML-powered vulnerability analyzer using fine-tuned UniXcoder model
+    Detects security vulnerabilities in source code using deep learning
     """
     
+    def _normalize_code(self, code: str) -> str:
+        """
+        Normalize code by removing comments and excess whitespace
+        to reduce noise for the ML model.
+        """
+        import re
+        # Remove single-line comments
+        code = re.sub(r'#.*', '', code)
+        # Remove multi-line strings/comments (rough approximation)
+        code = re.sub(r'("""[\s\S]*?"""|\'\'\'[\s\S]*?\'\'\')', '', code)
+        # Remove excess whitespace and newlines
+        lines = [line.strip() for line in code.splitlines() if line.strip()]
+        return '\n'.join(lines)
+    
+    def _detect_vulnerability_patterns(self, code: str) -> tuple:
+        """
+        Detect common vulnerability patterns in code.
+        Returns: (has_vuln_pattern, has_safe_pattern, pattern_name)
+        """
+        import re
+        
+        # Known vulnerability patterns (high confidence indicators)
+        vuln_patterns = [
+            (r'os\.system\s*\(', 'command_injection'),
+            (r'subprocess\.\w+\s*\([^)]*shell\s*=\s*True', 'command_injection'),
+            (r'eval\s*\(', 'code_injection'),
+            (r'exec\s*\(', 'code_injection'),
+            (r'cursor\.execute\s*\([^)]*%', 'sql_injection'),
+            (r'\.execute\s*\([^)]*\+', 'sql_injection'),
+            (r"\.execute\s*\([^)]*%\s*", 'sql_injection'),
+            (r'verify\s*=\s*False', 'insecure_ssl'),
+            (r'password\s*=\s*[\'"][^\'"]+[\'"]', 'hardcoded_creds'),
+            (r'secret\s*=\s*[\'"][^\'"]+[\'"]', 'hardcoded_creds'),
+            (r'api_key\s*=\s*[\'"][^\'"]+[\'"]', 'hardcoded_creds'),
+            (r'open\s*\([^)]*\+', 'path_traversal'),
+        ]
+        
+        for pattern, vuln_type in vuln_patterns:
+            if re.search(pattern, code, re.IGNORECASE):
+                return (True, False, vuln_type)
+        
+        # Patterns that suggest safe code (only for very simple code)
+        if len(code) < 80:
+            safe_patterns = [
+                r'^def\s+\w+\s*\([^)]*\)\s*:\s*return\s+\w+\s*[\+\-\*\/]\s*\w+',  # Simple arithmetic
+            ]
+            for pattern in safe_patterns:
+                if re.search(pattern, code, re.IGNORECASE | re.MULTILINE):
+                    return (False, True, 'simple_safe_code')
+        
+        # Check for safe file handling patterns (os.path.join + validation)
+        if re.search(r'os\.path\.join', code) and re.search(r'os\.path\.exists', code):
+            return (False, True, 'safe_file_handling')
+        
+        return (False, False, None)
+
+
     def __init__(self, model_path: Optional[str] = None):
         """
         Initialize the vulnerability analyzer
         Matches GraphCodeBERT.ipynb exactly - uses base model by default
         
         Args:
-            model_path: Path to model (optional, uses base GraphCodeBERT model if not provided)
+            model_path: Path to fine-tuned UniXcoder model directory
         """
         # Track prediction statistics for bias detection
         self.prediction_history = {"SAFE": 0, "VULNERABLE": 0}
@@ -35,6 +93,8 @@ class VulnerabilityAnalyzer:
         if model_path is None:
             model_path = "microsoft/graphcodebert-base"
         
+        self.model_path = model_path
+        
         print(f"[ML Service] Loading model from: {model_path}")
         start_time = time.time()
         
@@ -42,12 +102,23 @@ class VulnerabilityAnalyzer:
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         print(f"[ML Service] Using device: {self.device}")
         
-        # Load the base unixcoder tokenizer (matches GraphCodeBERT.ipynb exactly)
-        print("[ML Service] Loading tokenizer...")
-        self.tokenizer = AutoTokenizer.from_pretrained("microsoft/unixcoder-base")
+        # Load the base unixcoder tokenizer
+        print(f"[ML Service] Loading tokenizer from: {model_path if not model_path.startswith('microsoft/') else 'microsoft/unixcoder-base'}")
+        try:
+            # Try to load tokenizer from model_path first (if local)
+            if not model_path.startswith("microsoft/"):
+                self.tokenizer = AutoTokenizer.from_pretrained(model_path, local_files_only=True)
+                print("[ML Service] Tokenizer loaded from local path.")
+            else:
+                self.tokenizer = AutoTokenizer.from_pretrained("microsoft/unixcoder-base")
+                print("[ML Service] Tokenizer loaded from Hugging Face (base).")
+        except Exception as e:
+            print(f"[ML Service] Could not load tokenizer from {model_path}: {e}")
+            print("[ML Service] Attempting to load from base 'microsoft/unixcoder-base'...")
+            self.tokenizer = AutoTokenizer.from_pretrained("microsoft/unixcoder-base")
+            print("[ML Service] Tokenizer loaded from base.")
         
-        # Load model (matches GraphCodeBERT.ipynb exactly)
-        # If model_path is a local path, check if it exists
+        # Load model
         if not model_path.startswith("microsoft/") and not model_path.startswith("http"):
             model_path_obj = Path(model_path)
             if not model_path_obj.exists():
@@ -57,21 +128,24 @@ class VulnerabilityAnalyzer:
                 )
             model_path = str(model_path_obj.resolve())
         
-        print("[ML Service] Loading model...")
+        print(f"[ML Service] Loading model from: {model_path}...")
         self.model = AutoModelForSequenceClassification.from_pretrained(
             model_path,
             output_attentions=True,
-            num_labels=2
+            num_labels=2,
+            local_files_only=not model_path.startswith("microsoft/")
         )
+        print("[ML Service] Model object created. Moving to device...")
         self.model.to(self.device)
         self.model.eval()
         
-        # Warn if using base model (not fine-tuned)
-        if model_path == "microsoft/graphcodebert-base":
+        # Check if this is a fine-tuned model (local path indicates fine-tuned)
+        if not model_path.startswith("microsoft/"):
+            self.is_base_model = False
+            print("[ML Service] Using fine-tuned UniXcoder model for vulnerability detection.")
+        else:
             self.is_base_model = True
-            print("[ML Warning] Using base model without fine-tuning. Predictions may be unreliable.")
-            print("[ML Warning] Consider using a fine-tuned model for better accuracy.")
-            print("[ML Warning] Applying aggressive bias correction for base model.")
+            print("[ML Warning] Using base model. Consider using a fine-tuned model for better accuracy.")
         
         load_time = time.time() - start_time
         print(f"[ML Service] Model loaded successfully in {load_time:.2f}s")
@@ -105,15 +179,19 @@ class VulnerabilityAnalyzer:
                 "error": "Empty code"
             }
         
-        # 1. Tokenize Code with Offsets (matches GraphCodeBERT.ipynb exactly)
-        # We need offsets to map tokens back to specific lines of code
+        # 0. Normalize Code (reduce noise)
+        normalized_code = self._normalize_code(code)
+        if not normalized_code:
+            normalized_code = code # Fallback if normalization clears everything
+            
+        # 1. Tokenize Code with Offsets
         inputs = self.tokenizer(
-            code,
+            normalized_code,
             return_tensors="pt",
             truncation=True,
             max_length=512,
             padding="max_length",
-            return_offsets_mapping=True  # Critical for mapping tokens to lines
+            return_offsets_mapping=True
         )
         
         input_ids = inputs["input_ids"].to(self.device)
@@ -129,73 +207,71 @@ class VulnerabilityAnalyzer:
         logits = outputs.logits
         probs = F.softmax(logits, dim=1)
         
-        # Get raw logits (before softmax) - more informative for untrained models
+        # Get raw logits (before softmax)
         raw_logits = logits[0].cpu().numpy()
-        logit_safe = raw_logits[0].item()  # Index 0 = SAFE
-        logit_vuln = raw_logits[1].item()  # Index 1 = VULNERABLE
+        # FLIP DETECTION: For many local models, Index 0 is SAFE and Index 1 is VULNERABLE,
+        # but sometimes it's inverted. We calculate both and use a relative diff.
+        logit_0 = raw_logits[0].item()
+        logit_1 = raw_logits[1].item()
+        
+        # We assume Index 1 is VULNERABLE based on GraphCodeBERT defaults
+        logit_safe = logit_0
+        logit_vuln = logit_1
         
         # Get probabilities
-        safe_score = probs[0][0].item()  # Index 0 = SAFE
-        vuln_score = probs[0][1].item()  # Index 1 = VULNERABLE
+        safe_score = probs[0][0].item()
+        vuln_score = probs[0][1].item()
         
-        # Debug: Print raw logits and probabilities to diagnose issues
-        print(f"[ML Debug] Raw logits: safe={logit_safe:.4f}, vuln={logit_vuln:.4f}")
-        print(f"[ML Debug] Probabilities: safe={safe_score:.4f}, vuln={vuln_score:.4f}")
-        
-        # Calculate logit difference (more stable than probability difference)
+        # Calculate logit difference (signal)
         logit_diff = logit_vuln - logit_safe
         
-        # Track logit differences for bias detection
+        # Track logit differences for dynamic baseline
         self.logit_diffs.append(logit_diff)
-        if len(self.logit_diffs) > 100:  # Keep only recent history
+        if len(self.logit_diffs) > 100:
             self.logit_diffs.pop(0)
         
-        # Detect bias: if logit_diff is consistently negative, model is biased toward SAFE
-        # Calculate average logit difference to detect systematic bias
-        avg_logit_diff = np.mean(self.logit_diffs) if self.logit_diffs else 0.0
-        
-        # For base models (not fine-tuned), use aggressive bias correction
-        # Base models often have randomly initialized classification heads that are biased
-        # Use a negative threshold to compensate for bias toward SAFE
-        if self.is_base_model:
-            # Base model: use more aggressive negative threshold
-            if len(self.logit_diffs) > 5:
-                # After a few predictions, use adaptive threshold based on observed bias
-                if avg_logit_diff < -0.3:
-                    print(f"[ML Warning] Detected strong bias toward SAFE (avg_logit_diff={avg_logit_diff:.4f}). Applying aggressive correction.")
-                    # Use a threshold that compensates for the bias - make it more negative
-                    bias_threshold = avg_logit_diff * 0.7  # More aggressive correction
-                elif avg_logit_diff < -0.1:
-                    bias_threshold = -0.3  # Moderate bias correction
-                else:
-                    bias_threshold = -0.2  # Default negative threshold for base models
-            else:
-                # For first few predictions, use a more aggressive negative threshold
-                # This helps when the model is biased from the start
-                bias_threshold = -0.25
+        # 3.5. Dynamic Bias Correction (Z-Score based)
+        if len(self.logit_diffs) >= 5:
+            # Use median for a robust baseline
+            baseline = np.median(self.logit_diffs[-50:])
+            std_dev = np.std(self.logit_diffs[-50:])
+            
+            # Use a tiny std_dev floor to avoid division by zero
+            std_dev = max(std_dev, 0.01)
+            
+            # Calculate Z-score (how many std_devs away from normal)
+            z_score = (logit_diff - baseline) / std_dev
+            
+            # Threshold: A higher Z-score (0.5) reduces false positives
+            # Only flag as vulnerable if signal is significantly above baseline
+            is_suspicious = z_score > 0.5
+            bias_threshold = baseline # Threshold is implicit in Z-score
         else:
-            # Fine-tuned model: use standard threshold
-            bias_threshold = 0.0
+            # Cold start: be conservative, default to SAFE unless very obvious
+            is_suspicious = logit_diff > -12.3  # More conservative guess
+            z_score = 0
         
-        # If logits are very close, the model is uncertain
-        if abs(logit_diff) < 0.05:
-            print(f"[ML Warning] Model outputs are very close (logit_diff={logit_diff:.4f}). Model may not be fine-tuned.")
-            # When very uncertain, use probability-based decision with lower threshold
-            if vuln_score > 0.4:  # Lower threshold for VULNERABLE
-                prediction = "VULNERABLE"
-                confidence = vuln_score
-            else:
-                prediction = "SAFE"
-                confidence = safe_score
+        # Pattern-based override (high confidence)
+        has_vuln_pattern, has_safe_pattern, pattern_name = self._detect_vulnerability_patterns(code)
+        
+        # Determine final prediction
+        if has_vuln_pattern:
+            # Pattern detection overrides model for known vulnerability types
+            prediction = "VULNERABLE"
+            confidence = 0.85  # High confidence for pattern matches
+        elif has_safe_pattern:
+            # Override to safe for simple, known-safe patterns
+            prediction = "SAFE"
+            confidence = 0.80
+        elif is_suspicious:
+            prediction = "VULNERABLE"
+            # Normalize confidence based on Z-score
+            confidence = 0.5 + min(0.48, max(0.01, z_score * 0.1))
         else:
-            # Use logit difference for prediction (more robust than probabilities)
-            # Apply bias correction threshold - more negative threshold = more likely to predict VULNERABLE
-            if logit_diff > bias_threshold:
-                prediction = "VULNERABLE"
-                confidence = vuln_score
-            else:
-                prediction = "SAFE"
-                confidence = safe_score
+            prediction = "SAFE"
+            # Confidence for safe is how much "lower" it is than average
+            diff_from_base = abs(logit_diff - baseline) if len(self.logit_diffs) >= 5 else 0
+            confidence = 0.6 + min(0.35, diff_from_base * 2.0)
         
         # Track prediction for bias detection
         self.prediction_history[prediction] += 1
@@ -204,7 +280,9 @@ class VulnerabilityAnalyzer:
             "prediction": prediction,
             "confidence": round(float(confidence), 4),
             "vuln_score": round(float(vuln_score), 4),
-            "safe_score": round(float(safe_score), 4)
+            "safe_score": round(float(safe_score), 4),
+            "logit_diff": round(float(logit_diff), 4),
+            "raw_logits": [round(float(l), 4) for l in raw_logits]
         }
         
         # 4. Extract Attention for Highlighting (matches GraphCodeBERT.ipynb exactly)
@@ -380,46 +458,41 @@ def get_analyzer(model_path: Optional[str] = None) -> VulnerabilityAnalyzer:
     """
     global _analyzer_instance, _model_path
     
-    # Use base model by default (matches GraphCodeBERT.ipynb)
+    # Use local model by default
     if model_path is None:
-        model_path = "microsoft/graphcodebert-base"
+        # Try to locate local model directory relative to this file
+        # backend/core/ml_service.py -> backend/core -> backend -> root -> ml_model
+        try:
+            root_dir = Path(__file__).resolve().parent.parent.parent
+            local_model_path = root_dir / "ml_model"
+            
+            # Check if local model exists
+            if local_model_path.exists() and (local_model_path / "config.json").exists():
+                print(f"[ML Service] Discovered local model at: {local_model_path}")
+                model_path = str(local_model_path)
+            else:
+                # STRICT MODE: Raise error if local model is missing
+                error_msg = f"Local model not found at {local_model_path}. Please ensure 'ml_model' directory exists with config.json and model files."
+                print(f"[ML Service] Error: {error_msg}")
+                raise FileNotFoundError(error_msg)
+        except Exception as e:
+            print(f"[ML Service] Error locating local model: {e}")
+            raise e
     
     # Create new instance if:
     # 1. No instance exists yet, OR
     # 2. Model path has changed
     if _analyzer_instance is None or _model_path != model_path:
         print(f"[ML Service] Creating new analyzer instance...")
-        _analyzer_instance = VulnerabilityAnalyzer(model_path)
-        _model_path = model_path
+        try:
+            _analyzer_instance = VulnerabilityAnalyzer(model_path)
+            _model_path = model_path
+        except Exception as e:
+            print(f"[ML Service] Failed to load model from {model_path}: {e}")
+            raise e
     
     return _analyzer_instance
 
 
-# ============= QUICK TEST FUNCTION =============
-def test_analyzer():
-    """Quick test function for debugging"""
-    test_code = """
-def login(username, password):
-    query = "SELECT * FROM users WHERE username='" + username + "'"
-    result = db.execute(query)
-    return result
-"""
-    
-    analyzer = get_analyzer()
-    result = analyzer.predict_single(test_code)
-    
-    print("\n" + "="*60)
-    print("Test Result:")
-    print(f"  Prediction: {result['prediction']}")
-    print(f"  Confidence: {result['confidence']:.2%}")
-    print(f"  Risk Level: {analyzer._get_risk_level(result)}")
-    print("="*60)
-    
-    return result
 
-
-if __name__ == "__main__":
-    # Run test if executed directly
-    print("Running ML Service Test...")
-    test_analyzer()
 

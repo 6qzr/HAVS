@@ -3,7 +3,7 @@
  * Handles all communication with the FastAPI backend
  */
 
-const API_BASE_URL = 'http://127.0.0.1:8000'
+const API_BASE_URL = 'http://localhost:8000'
 
 class APIService {
   /**
@@ -46,27 +46,27 @@ class APIService {
       // Create WebSocket connection
       const wsUrl = API_BASE_URL.replace('http://', 'ws://').replace('https://', 'wss://')
       const ws = new WebSocket(`${wsUrl}/ws/scan`)
-      
+
       // Set timeout for connection
       const connectionTimeout = setTimeout(() => {
         ws.close()
         reject(new Error('WebSocket connection timeout'))
       }, 5000)
-      
+
       ws.onopen = () => {
         clearTimeout(connectionTimeout)
         console.log('WebSocket connected')
-        
+
         // Send scan request
         ws.send(JSON.stringify({
           repo_url: repoUrl
         }))
       }
-      
+
       ws.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data)
-          
+
           if (data.type === 'progress') {
             // Call progress callback
             if (onProgress) {
@@ -85,12 +85,12 @@ class APIService {
           console.error('Error parsing WebSocket message:', error)
         }
       }
-      
+
       ws.onerror = (error) => {
         console.error('WebSocket error:', error)
         reject(new Error('WebSocket connection error'))
       }
-      
+
       ws.onclose = (event) => {
         if (!event.wasClean) {
           console.warn('WebSocket closed unexpectedly')
@@ -107,10 +107,10 @@ class APIService {
   async uploadScan(files) {
     try {
       const formData = new FormData()
-      
+
       // Handle both single file and multiple files
       const fileArray = Array.isArray(files) ? files : [files]
-      
+
       // Append all files
       fileArray.forEach((file, index) => {
         formData.append('files', file)  // Use 'files' (plural) for multiple files
@@ -241,7 +241,7 @@ class APIService {
     // Group vulnerabilities by severity and extract CWE + CISA KEV data
     const vulnerabilities = []
     let cisaKevCount = 0
-    
+
     backendData.dependencies.forEach(dep => {
       if (dep.cves && dep.cves.length > 0) {
         dep.cves.forEach(cve => {
@@ -249,7 +249,7 @@ class APIService {
           if (isCisaKev) {
             cisaKevCount++
           }
-          
+
           vulnerabilities.push({
             id: cve.cve_id,
             title: cve.cve_id,
