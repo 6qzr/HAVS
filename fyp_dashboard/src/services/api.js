@@ -3,7 +3,9 @@
  * Handles all communication with the FastAPI backend
  */
 
-const API_BASE_URL = 'http://localhost:8000'
+// Use environment variable from Vite, or fall back to current origin
+// In production with Nginx proxy, and empty string or relative path works best
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || (window.location.hostname === 'localhost' ? 'http://localhost:8000' : window.location.origin + '/api')
 
 class APIService {
   /**
@@ -44,7 +46,12 @@ class APIService {
   async startScanWithProgress(repoUrl, onProgress = null) {
     return new Promise((resolve, reject) => {
       // Create WebSocket connection
-      const wsUrl = API_BASE_URL.replace('http://', 'ws://').replace('https://', 'wss://')
+      let base = API_BASE_URL
+      if (!base.startsWith('http')) {
+        // Handle relative paths
+        base = window.location.origin + (base.startsWith('/') ? base : '/' + base)
+      }
+      const wsUrl = base.replace('http://', 'ws://').replace('https://', 'wss://')
       const ws = new WebSocket(`${wsUrl}/ws/scan`)
 
       // Set timeout for connection

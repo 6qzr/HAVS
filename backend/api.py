@@ -27,8 +27,9 @@ app = FastAPI(
 )
 
 # Service URLs
-DEPENDENCY_SCANNER_URL = "http://localhost:8001"
-ML_ANALYSIS_URL = "http://localhost:8002"
+# Service URLs from environment variables (fallback to localhost for dev)
+DEPENDENCY_SCANNER_URL = os.getenv("DEPENDENCY_SCANNER_URL", "http://localhost:8001")
+ML_ANALYSIS_URL = os.getenv("ML_ANALYSIS_URL", "http://localhost:8002")
 
 def call_dependency_scanner(dependency_files: list) -> dict:
     """

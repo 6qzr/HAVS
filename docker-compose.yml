@@ -1,0 +1,29 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+      - "8001:8001"
+      - "8002:8002"
+    env_file:
+      - .env
+    environment:
+      - DEPENDENCY_SCANNER_URL=http://backend:8001
+      - ML_ANALYSIS_URL=http://backend:8002
+    volumes:
+      - ./logs:/app/logs
+    restart: always
+
+  nginx:
+    build:
+      context: .
+      dockerfile: frontend.Dockerfile
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    restart: always
